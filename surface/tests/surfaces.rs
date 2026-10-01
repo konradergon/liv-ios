@@ -43,7 +43,7 @@ fn tasks_are_grouped_by_status_with_ours_first_and_no_status_last() {
     e.set(a, prop::STATUS, Value::Ref(status::TODO), 1_010).unwrap();
     e.set(b, prop::STATUS, Value::Ref(status::DOING), 1_011).unwrap();
 
-    let g = tasks(&e, None, &Lens::Everything, DAY).unwrap().groups;
+    let g = tasks(&e, None, &Lens::Everything, DAY, 0).unwrap().groups;
     let names: Vec<&str> = g.iter().map(|x| x.name.as_str()).collect();
     assert_eq!(names, vec!["To do", "Doing", "No status"]);
     assert_eq!(titles(&g[2].rows), vec!["Loose"]);
@@ -66,7 +66,7 @@ fn a_task_whose_status_was_retired_still_shows() {
     e.set(t, prop::STATUS, Value::Ref(ghost), 1_002).unwrap();
     e.trash(ghost, 1_003).unwrap();
 
-    let g = tasks(&e, None, &Lens::Everything, DAY).unwrap().groups;
+    let g = tasks(&e, None, &Lens::Everything, DAY, 0).unwrap().groups;
     let found: Vec<&str> = g.iter().flat_map(|x| titles(&x.rows)).collect();
     assert_eq!(found, vec!["Waiting on legal"], "it is on the screen somewhere");
 }
@@ -81,7 +81,7 @@ fn tasks_sort_by_due_then_title_then_id_with_undated_last() {
     e.set(far, prop::DUE, Value::Date(DateSpec::Day(DAY + 5)), 1_010).unwrap();
     e.set(near, prop::DUE, Value::Date(DateSpec::Day(DAY + 1)), 1_011).unwrap();
 
-    let g = tasks(&e, None, &Lens::Everything, DAY).unwrap().groups;
+    let g = tasks(&e, None, &Lens::Everything, DAY, 0).unwrap().groups;
     assert_eq!(
         titles(&g[0].rows),
         vec!["Apple", "Zebra", "Undated apple", "Undated banana"],
@@ -105,7 +105,7 @@ fn lateness_is_the_groups_fact_and_a_finished_band_has_none() {
     e.set(old, prop::DUE, Value::Date(DateSpec::Day(DAY - 30)), 2_001).unwrap();
     e.set(old, prop::STATUS, Value::Ref(status::DONE), 2_002).unwrap();
 
-    let g = tasks(&e, None, &Lens::Everything, DAY).unwrap().groups;
+    let g = tasks(&e, None, &Lens::Everything, DAY, 0).unwrap().groups;
     let todo = g.iter().find(|x| x.name == "To do").unwrap();
     assert_eq!(todo.late, 2, "two of the three are overdue");
     let done = g.iter().find(|x| x.name == "Done").unwrap();
@@ -124,7 +124,7 @@ fn the_project_filter_narrows_inside_the_lens_rather_than_replacing_it() {
     e.set(hidden, prop::PROJECT, Value::Ref(roof), 1_011).unwrap();
 
     let lens: Lens = [seen].into_iter().collect();
-    let g = tasks(&e, Some(roof), &lens, DAY).unwrap().groups;
+    let g = tasks(&e, Some(roof), &lens, DAY, 0).unwrap().groups;
     let found: Vec<&str> = g.iter().flat_map(|x| titles(&x.rows)).collect();
     assert_eq!(found, vec!["In the workspace"]);
     assert!(lens.on());
@@ -146,7 +146,7 @@ fn the_groups_come_in_the_order_the_status_picker_offers() {
 
     let offered: Vec<EntityId> =
         e.options_for(prop::STATUS).unwrap().into_iter().map(|(id, _)| id).collect();
-    let g = tasks(&e, None, &Lens::Everything, DAY).unwrap().groups;
+    let g = tasks(&e, None, &Lens::Everything, DAY, 0).unwrap().groups;
     let shown: Vec<EntityId> = g.iter().filter_map(|x| x.status).collect();
     assert_eq!(shown, offered);
 
@@ -169,7 +169,7 @@ fn a_row_is_late_only_while_it_can_still_be_done() {
     e.set(finished, prop::DUE, Value::Date(DateSpec::Day(DAY - 9)), 1_012).unwrap();
     e.set(finished, prop::STATUS, Value::Ref(status::DONE), 1_013).unwrap();
 
-    let rows: Vec<Row> = tasks(&e, None, &Lens::Everything, DAY)
+    let rows: Vec<Row> = tasks(&e, None, &Lens::Everything, DAY, 0)
         .unwrap()
         .groups
         .into_iter()
@@ -183,8 +183,8 @@ fn a_row_is_late_only_while_it_can_still_be_done() {
     // An event is never late: it happened. The rule is one function.
     let meeting = e.create(kind::EVENT, Some("Meeting"), 1_020).unwrap();
     e.set(meeting, prop::DUE, Value::Date(DateSpec::Day(DAY - 1)), 1_021).unwrap();
-    assert!(!is_late(&row(&e, meeting).unwrap(), DAY));
-    assert!(is_late(&row(&e, overdue).unwrap(), DAY));
+    assert!(!is_late(&row(&e, meeting, 0).unwrap(), DAY));
+    assert!(is_late(&row(&e, overdue, 0).unwrap(), DAY));
 }
 
 #[test]
@@ -210,11 +210,11 @@ fn the_screens_counts_ignore_the_project_filter() {
     .unwrap();
 
     for project in [None, Some(roof)] {
-        let t = tasks(&e, project, &Lens::Everything, DAY).unwrap();
+        let t = tasks(&e, project, &Lens::Everything, DAY, 0).unwrap();
         assert_eq!(t.open, 3, "two open tasks and one open line, whatever the filter");
         assert_eq!(t.late, 1);
     }
-    let narrowed = tasks(&e, Some(roof), &Lens::Everything, DAY).unwrap();
+    let narrowed = tasks(&e, Some(roof), &Lens::Everything, DAY, 0).unwrap();
     let found: Vec<&str> = narrowed.groups.iter().flat_map(|x| titles(&x.rows)).collect();
     assert_eq!(found, vec!["Order slates"], "while the list itself narrows");
 }
@@ -234,10 +234,10 @@ fn the_lines_in_notes_come_with_the_answer_and_wear_the_lens() {
         .unwrap();
     }
     let lens: Lens = [mine].into_iter().collect();
-    let t = tasks(&e, None, &lens, DAY).unwrap();
+    let t = tasks(&e, None, &lens, DAY, 0).unwrap();
     let from: Vec<EntityId> = t.in_notes.iter().map(|l| l.note).collect();
     assert_eq!(from, vec![mine]);
-    assert_eq!(t.in_notes.len(), note_tasks(&e, &lens).unwrap().len(), "the same projection");
+    assert_eq!(t.in_notes.len(), note_tasks(&e, &lens, 0).unwrap().len(), "the same projection");
     assert_eq!(t.open, 1);
 }
 
@@ -264,7 +264,7 @@ fn the_project_segment_offers_the_most_used_projects() {
             at += 2;
         }
     }
-    let offered = tasks(&e, None, &Lens::Everything, DAY).unwrap().projects;
+    let offered = tasks(&e, None, &Lens::Everything, DAY, 0).unwrap().projects;
     assert_eq!(offered.len(), PROJECTS_OFFERED);
     let names: Vec<&str> = offered.iter().map(|(_, n)| n.as_str()).collect();
     assert_eq!(&names[..3], &["P0", "P1", "P2"], "commonest first, then by name");
@@ -281,14 +281,14 @@ fn filtering_by_project_reads_the_cell_not_a_name() {
     e.set(a, prop::PROJECT, Value::Ref(roof), 1_010).unwrap();
     e.set(b, prop::PROJECT, Value::Ref(other), 1_011).unwrap();
 
-    let g = tasks(&e, Some(roof), &Lens::Everything, DAY).unwrap().groups;
+    let g = tasks(&e, Some(roof), &Lens::Everything, DAY, 0).unwrap().groups;
     let found: Vec<&str> = g.iter().flat_map(|x| titles(&x.rows)).collect();
     assert_eq!(found, vec!["Order slates"]);
 
     // Renaming the project does not move a task, because the cell holds
     // the id — the claim core.md §2 makes, on this surface.
     e.set(roof, prop::NAME, Value::Text("The roof".into()), 2_000).unwrap();
-    let g = tasks(&e, Some(roof), &Lens::Everything, DAY).unwrap().groups;
+    let g = tasks(&e, Some(roof), &Lens::Everything, DAY, 0).unwrap().groups;
     assert_eq!(g.iter().flat_map(|x| titles(&x.rows)).count(), 1);
 }
 
@@ -315,7 +315,7 @@ fn the_calendar_puts_each_thing_on_its_day_with_all_day_apart() {
     let filed = event_at(&mut e, "Archived", DAY, 11, 0);
     e.set(filed, prop::ARCHIVED, Value::Bool(true), 1_004).unwrap();
 
-    let days = calendar(&e, DAY, DAY + 3, &Lens::Everything).unwrap();
+    let days = calendar(&e, DAY, DAY + 3, &Lens::Everything, 0).unwrap();
     let which: Vec<i32> = days.iter().map(|d| d.day).collect();
     assert_eq!(which, vec![DAY, DAY + 2], "a day with nothing on it is not sent");
     assert_eq!(titles(&days[0].all_day), vec!["All day thing"]);
@@ -332,7 +332,7 @@ fn the_calendar_runs_in_time_order_and_stops_at_its_edges() {
     event_at(&mut e, "Last minute", DAY + 1, 23, 59);
     event_at(&mut e, "Just after", DAY + 2, 0, 0);
 
-    let days = calendar(&e, DAY, DAY + 1, &Lens::Everything).unwrap();
+    let days = calendar(&e, DAY, DAY + 1, &Lens::Everything, 0).unwrap();
     assert_eq!(titles(&days[0].timed), vec!["Midnight", "Late"]);
     assert_eq!(titles(&days[1].timed), vec!["Last minute"]);
     assert_eq!(days.len(), 2);
@@ -344,7 +344,7 @@ fn the_calendar_wears_the_lens_like_every_other_surface() {
     let seen = event_at(&mut e, "Mine", DAY, 10, 0);
     event_at(&mut e, "Theirs", DAY, 10, 0);
     let lens: Lens = [seen].into_iter().collect();
-    let days = calendar(&e, DAY, DAY, &lens).unwrap();
+    let days = calendar(&e, DAY, DAY, &lens, 0).unwrap();
     assert_eq!(titles(&days[0].timed), vec!["Mine"]);
 }
 
@@ -360,7 +360,7 @@ fn a_dated_backstage_thing_stays_off_the_day_and_out_of_late() {
     e.set(real, prop::DUE, Value::Date(DateSpec::Instant { ms: at(DAY, 11, 0), tz: 0 }), 1_003)
         .unwrap();
 
-    let days = calendar(&e, DAY, DAY, &Lens::Everything).unwrap();
+    let days = calendar(&e, DAY, DAY, &Lens::Everything, 0).unwrap();
     let ids: Vec<EntityId> = days[0].timed.iter().map(|r| r.id).collect();
     assert_eq!(ids, vec![real]);
 
@@ -376,6 +376,20 @@ fn a_dated_backstage_thing_stays_off_the_day_and_out_of_late() {
 /// The two are one rule. The old fallback was `#4142`, which is both — an
 /// id on screen AND a name that tells a person nothing. It reached four
 /// surfaces, and the shell mapped it away on only one.
+/// **A made name is in the phone's time** (owner, 2026-10-01: a task made
+/// at 06:07 in Stockholm read "Task · 1 Oct 04:07" — UTC). An id knows the
+/// instant it was made; the phone's offset says what its clock read then.
+#[test]
+fn a_made_name_reads_the_phones_clock() {
+    let mut e = engine();
+    let day = days_from_civil(2026, 10, 1);
+    let made = day as u64 * 86_400_000 + (4 * 60 + 7) * 60_000; // 04:07 UTC
+    let task = e.create(kind::TASK, None, made).unwrap();
+    assert_eq!(row(&e, task, 120).unwrap().title, "Task · 1 Oct 06:07", "two hours ahead");
+    assert_eq!(row(&e, task, 0).unwrap().title, "Task · 1 Oct 04:07", "on UTC");
+    assert_eq!(row(&e, task, -300).unwrap().title, "Task · 30 Sep 23:07", "and the day moves");
+}
+
 #[test]
 fn a_nameless_thing_gets_a_sensible_name_and_never_an_id() {
     let mut e = engine();
@@ -390,7 +404,7 @@ fn a_nameless_thing_gets_a_sensible_name_and_never_an_id() {
         .unwrap();
 
     for id in [task, note, event, loose] {
-        let r = row(&e, id).unwrap();
+        let r = row(&e, id, 0).unwrap();
         assert!(r.untitled, "still flagged so a surface can draw it quietly");
         assert!(!r.title.is_empty(), "never empty");
         // THE POINT. Not the id, not any part of it.
@@ -401,18 +415,18 @@ fn a_nameless_thing_gets_a_sensible_name_and_never_an_id() {
 
     // IT SAYS WHAT THE THING IS, from the model's own word — not a copy
     // of that word kept in a shell (`one-core.md` §4).
-    assert!(row(&e, task).unwrap().title.starts_with("Task · "));
-    assert!(row(&e, note).unwrap().title.starts_with("Note · "));
-    assert!(row(&e, event).unwrap().title.starts_with("Event · "));
+    assert!(row(&e, task, 0).unwrap().title.starts_with("Task · "));
+    assert!(row(&e, note, 0).unwrap().title.starts_with("Note · "));
+    assert!(row(&e, event, 0).unwrap().title.starts_with("Event · "));
     // An untyped capture is not claimed to be a note.
-    assert!(row(&e, loose).unwrap().title.starts_with("Capture · "));
+    assert!(row(&e, loose, 0).unwrap().title.starts_with("Capture · "));
 
     // AND IT SAYS WHEN, which is what distinguishes fourteen nameless
     // rows from each other where "Task" fourteen times does not. The
     // harness had already tripped over exactly that, unable to aim at one
     // of three notes sharing a label.
-    let a = row(&e, task).unwrap().title;
-    let b = row(&e, note).unwrap().title;
+    let a = row(&e, task, 0).unwrap().title;
+    let b = row(&e, note, 0).unwrap().title;
     assert_ne!(a, b);
     assert!(a.contains("Sep"), "the month reads as a word: {a:?}");
     assert!(a.contains(':'), "and the time is there to break a tie: {a:?}");
@@ -420,8 +434,8 @@ fn a_nameless_thing_gets_a_sensible_name_and_never_an_id() {
     // A NAME STILL WINS, and so does a body's first line — a made name is
     // the last resort, not the first.
     let named = e.create(kind::TASK, Some("Order slates"), when).unwrap();
-    assert_eq!(row(&e, named).unwrap().title, "Order slates");
-    assert!(!row(&e, named).unwrap().untitled);
+    assert_eq!(row(&e, named, 0).unwrap().title, "Order slates");
+    assert!(!row(&e, named, 0).unwrap().untitled);
 
     let scrap = e.create(kind::NOTE, None, when).unwrap();
     e.set(
@@ -436,7 +450,7 @@ fn a_nameless_thing_gets_a_sensible_name_and_never_an_id() {
         when,
     )
     .unwrap();
-    assert_eq!(row(&e, scrap).unwrap().title, "Trip planning");
+    assert_eq!(row(&e, scrap, 0).unwrap().title, "Trip planning");
 }
 
 /// **DOES THIS THING HAVE WORDS IN IT?** — one boolean, four callers.
@@ -465,33 +479,33 @@ fn a_row_says_whether_it_holds_any_words() {
     let when = at(DAY, 9, 0) as u64;
 
     let empty = e.create(kind::NOTE, Some("Nothing in it"), when).unwrap();
-    assert!(!row(&e, empty).unwrap().has_body, "a name is not a body");
+    assert!(!row(&e, empty, 0).unwrap().has_body, "a name is not a body");
 
     let written = e.create(kind::NOTE, Some("Slates"), when).unwrap();
     e.set(written, prop::BODY, Value::Rich(vec![Span::text("call the roofer")]), when).unwrap();
-    assert!(row(&e, written).unwrap().has_body);
+    assert!(row(&e, written, 0).unwrap().has_body);
 
     // THE INBOX'S OWN CASE: an untyped capture. It has no name and no
     // kind, and the words it was caught with are the whole of it.
     let caught = e.capture("ferry times", when).unwrap();
-    let r = row(&e, caught).unwrap();
+    let r = row(&e, caught, 0).unwrap();
     assert!(r.has_body, "a capture is nothing BUT its body");
     assert_eq!(r.kind_word, None, "and it is still untyped");
 
     // A capture of nothing is not a capture of something. `clerk.rs`
     // already makes one of these, so it is a shape that occurs.
     let blank = e.capture("", when).unwrap();
-    assert!(!row(&e, blank).unwrap().has_body, "an empty body is not a body");
+    assert!(!row(&e, blank, 0).unwrap().has_body, "an empty body is not a body");
 
     // A body EMPTIED again says no, rather than staying true because it
     // once said yes.
     e.set(written, prop::BODY, Value::Rich(vec![]), when + 1).unwrap();
-    assert!(!row(&e, written).unwrap().has_body);
+    assert!(!row(&e, written, 0).unwrap().has_body);
 
     // Whitespace is not words. A shell drawing "Content lives on this
     // entity" for a note holding one space would be lying to the person
     // who is looking for the content.
     let spaces = e.create(kind::NOTE, None, when).unwrap();
     e.set(spaces, prop::BODY, Value::Rich(vec![Span::text("   \n  ")]), when).unwrap();
-    assert!(!row(&e, spaces).unwrap().has_body);
+    assert!(!row(&e, spaces, 0).unwrap().has_body);
 }

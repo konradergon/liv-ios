@@ -102,8 +102,8 @@ fn unsorted_is_what_a_person_files_with_no_area_whatever_the_lens() {
     let lib = read(&e, &lens);
     let expected = vec![stranded, scrap, empty, loose_task, loose_note];
     assert_eq!(lib.unsorted, expected, "newest first, and never lensed");
-    assert!(is_unsorted(&row(&e, loose_note).unwrap()));
-    assert!(!is_unsorted(&row(&e, filed).unwrap()));
+    assert!(is_unsorted(&row(&e, loose_note, 0).unwrap()));
+    assert!(!is_unsorted(&row(&e, filed, 0).unwrap()));
 }
 
 #[test]
@@ -127,7 +127,7 @@ fn the_panel_counts_the_lists_it_opens() {
     let c = &lib.counts;
     assert_eq!(c.notes, lib.notes.len());
     assert_eq!(c.unsorted, lib.unsorted.len());
-    let task_rows: usize = tasks(&e, None, &Lens::Everything, DAY)
+    let task_rows: usize = tasks(&e, None, &Lens::Everything, DAY, 0)
         .unwrap()
         .groups
         .iter()
@@ -215,8 +215,8 @@ fn backstage_furniture_is_on_no_list() {
     }
     // And it is not a display trick: they really are marked, and the mark
     // is what `visible` reads.
-    assert!(row(&e, my_area).unwrap().working);
-    assert!(!row(&e, note).unwrap().working);
+    assert!(row(&e, my_area, 0).unwrap().working);
+    assert!(!row(&e, note, 0).unwrap().working);
 }
 
 #[test]

@@ -24,6 +24,9 @@ extension NSAttributedString.Key {
     static let livTaskBox = NSAttributedString.Key("liv.taskBox")
     /// On a whole `[[id|Name]]` token. Value: NSNumber (the target id).
     static let livRef = NSAttributedString.Key("liv.ref")
+    /// On the words of a web link — a bare address, or `[text](url)`'s
+    /// text. Value: NSString, the address a tap opens.
+    static let livURL = NSAttributedString.Key("liv.url")
     /// On the dashes of a `---` line. Value: NSNumber(true). The glyphs
     /// go clear and the layout manager draws a rule across the line —
     /// the same trick the checkbox uses, so the buffer stays plain text.
@@ -624,6 +627,29 @@ enum MarkStyler {
                             .backgroundColor: LivInk.panel2,
                         ], range: abs(r))
                 }
+            case .url(let r):
+                storage.addAttributes(
+                    [
+                        .foregroundColor: LivInk.accent,
+                        .livURL: MarkScan.webAddress((line as NSString).substring(with: r))
+                            as NSString,
+                    ], range: abs(r))
+            case .link(let whole, let text, let url):
+                // A WEB LINK READS AS ITS WORDS off the caret's line. On it
+                // the brackets and the address show, dimmed, to be edited —
+                // they are typed syntax, like `**`, not a machine's id.
+                mark(
+                    NSRange(location: whole.location, length: text.location - whole.location),
+                    font: contentFont)
+                mark(
+                    NSRange(location: NSMaxRange(text), length: NSMaxRange(whole) - NSMaxRange(text)),
+                    font: contentFont)
+                storage.addAttributes(
+                    [
+                        .foregroundColor: LivInk.accent,
+                        .livURL: MarkScan.webAddress((line as NSString).substring(with: url))
+                            as NSString,
+                    ], range: abs(text))
             case .refToken(let whole, let name):
                 // **A link reads as its NAME, and only its name** (owner,
                 // 2026-09-14: "only render things end users would care
@@ -733,6 +759,17 @@ func livStylerSelfCheck() -> [String] {
         }
     }
     check("no tint on the heading after a block", tinted.isEmpty, "\(tinted) heading \(headingLine)")
+
+    // A WEB LINK carries its address for the tap — on its words, and
+    // nowhere else.
+    let webText = "see https://x.io and [Liv](https://liv.app)" as NSString
+    let web = NSTextStorage(string: webText as String)
+    MarkStyler.apply(to: web, in: NSRange(location: 0, length: webText.length))
+    func address(_ at: Int) -> String? { web.attribute(.livURL, at: at, effectiveRange: nil) as? String }
+    check("a bare address opens itself", address(webText.range(of: "https://x").location) == "https://x.io")
+    check("a link's words open its address", address(webText.range(of: "Liv]").location) == "https://liv.app")
+    check("a link's bracket does not", address(webText.range(of: "[Liv").location) == nil)
+    check("nor do the words around it", address(webText.range(of: "and").location) == nil)
     // NOTHING MOVES WHEN THE CARET LEAVES: the heading's line keeps its
     // place and its air whether its `#` shows or not.
     check(
@@ -1958,6 +1995,14 @@ struct MarkdownEditor: UIViewRepresentable {
                 parent.onOpenRef(id)
                 return
             }
+            // A web link opens where web pages open — out of the app, the
+            // way a file does.
+            if let address = hit(.livURL, at: point)?.value as? String,
+                let url = URL(string: address)
+            {
+                UIApplication.shared.open(url)
+                return
+            }
             guard let result = EditOps.toggleTask(view.text, at: characterIndex(of: point))
             else { return }
             // Toggle WITHOUT stealing focus or moving the caret: this is a
@@ -2043,7 +2088,8 @@ struct MarkdownEditor: UIViewRepresentable {
             _ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch
         ) -> Bool {
             let point = touch.location(in: view ?? UIView())
-            return hit(.livRef, at: point) != nil || hit(.livTaskBox, at: point, slack: 10) != nil
+            return hit(.livRef, at: point) != nil || hit(.livURL, at: point) != nil
+                || hit(.livTaskBox, at: point, slack: 10) != nil
         }
     }
 }

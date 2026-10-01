@@ -403,6 +403,8 @@ pub unsafe extern "C" fn liv_view_today(
 /// The Tasks screen: every task grouped by status, the screen's counts,
 /// the open lines in notes, and the projects its menu offers. `project`
 /// is a hex id or null; it narrows the groups and nothing else.
+/// `offset_min` is the phone's clock against UTC, which a nameless
+/// thing's made name is read on — as on every verb that hands rows back.
 ///
 /// # Safety
 /// As `liv_view_today`.
@@ -411,6 +413,7 @@ pub unsafe extern "C" fn liv_view_tasks(
     path: *const c_char,
     project: *const c_char,
     today_day: i32,
+    offset_min: i32,
     lens: *const c_char,
     out: *mut *mut c_char,
 ) -> i32 {
@@ -427,7 +430,7 @@ pub unsafe extern "C" fn liv_view_tasks(
         }
     };
     match with_engine(path, |e| {
-        let t = tasks(e, project, &lens, today_day).map_err(|_| LIV_ERR_READ)?;
+        let t = tasks(e, project, &lens, today_day, offset_min).map_err(|_| LIV_ERR_READ)?;
         Ok(WireTasks {
             groups: t
                 .groups
@@ -534,7 +537,7 @@ pub unsafe extern "C" fn liv_view_reminders(
 
 /// The calendar: every day from `from_day` to `to_day` (days since the
 /// epoch, both included) that has anything on it, its all-day things apart
-/// from its timed ones, each in time order.
+/// from its timed ones, each in time order. `offset_min` as on Tasks.
 ///
 /// # Safety
 /// As `liv_view_today`.
@@ -543,6 +546,7 @@ pub unsafe extern "C" fn liv_view_day(
     path: *const c_char,
     from_day: i32,
     to_day: i32,
+    offset_min: i32,
     lens: *const c_char,
     out: *mut *mut c_char,
 ) -> i32 {
@@ -551,7 +555,7 @@ pub unsafe extern "C" fn liv_view_day(
         Err(e) => return e,
     };
     match with_engine(path, |e| {
-        let days = calendar(e, from_day, to_day, &lens).map_err(|_| LIV_ERR_READ)?;
+        let days = calendar(e, from_day, to_day, &lens, offset_min).map_err(|_| LIV_ERR_READ)?;
         Ok(days
             .iter()
             .map(|d| WireCalendarDay {

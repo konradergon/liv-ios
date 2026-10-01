@@ -1460,7 +1460,7 @@ final class BoxModel: ObservableObject {
     ) {
         let lensText = Self.lensJSON(lens)
         engineRead(LivSearchScreen.self, { to, out in
-            livCString(lensText) { l in liv_view_search(to, query, 200, l, out) }
+            livCString(lensText) { l in liv_view_search(to, query, 200, livOffsetMinutes(), l, out) }
         }) { found, _ in
             let facets: [LivFacet] = (found?.facets ?? []).map { f in
                 LivFacet(
@@ -1664,7 +1664,7 @@ extension BoxModel {
         let lens = Self.lensJSON(libraryLens)
         let asked = libraryLens
         let now = Int64(Date().timeIntervalSince1970 * 1000)
-        let offset = Int32(TimeZone.current.secondsFromGMT() / 60)
+        let offset = livOffsetMinutes()
         engineRead(LivLibrary.self, { to, out in
             livCString(lens) { l in liv_view_library(to, now, offset, l, out) }
         }) { [weak self] library, fault in
@@ -2722,7 +2722,7 @@ extension BoxModel {
     /// trash. Two verbs one letter apart is the kind of pair that reads
     /// fine and calls the wrong one.
     func engineTrashRows(_ done: @escaping ([EntityRow]) -> Void) {
-        engineRead([EntityRow].self, { to, out in liv_view_trash(to, out) }) { v, _ in
+        engineRead([EntityRow].self, { to, out in liv_view_trash(to, livOffsetMinutes(), out) }) { v, _ in
             done(v ?? [])
         }
     }
@@ -2778,7 +2778,7 @@ extension BoxModel {
         let today = Self.todayDay
         engineRead(LivTasks.self, { to, out in
             livCString(project) { p in
-                livCString(lens) { l in liv_view_tasks(to, p, today, l, out) }
+                livCString(lens) { l in liv_view_tasks(to, p, today, livOffsetMinutes(), l, out) }
             }
         }) { [weak self] answer, _ in
             // An answer to a question nobody is asking any more is dropped.
@@ -2857,7 +2857,7 @@ extension BoxModel {
     fileprivate func loadToday(_ ask: TodayAsk) {
         let lens = Self.lensJSON(ask.lens)
         let now = Int64(Date().timeIntervalSince1970 * 1000)
-        let offset = Int32(TimeZone.current.secondsFromGMT() / 60)
+        let offset = livOffsetMinutes()
         engineRead(LivToday.self, { to, out in
             livCString(lens) { l in liv_view_today(to, now, offset, l, out) }
         }) { [weak self] answer, _ in
@@ -2895,7 +2895,7 @@ extension BoxModel {
     fileprivate func loadCalendar(_ ask: CalendarAsk) {
         let lens = Self.lensJSON(ask.lens)
         engineRead([LivCalendarDay].self, { to, out in
-            livCString(lens) { l in liv_view_day(to, ask.from, ask.to, l, out) }
+            livCString(lens) { l in liv_view_day(to, ask.from, ask.to, livOffsetMinutes(), l, out) }
         }) { [weak self] answer, _ in
             guard let self, self.calendarAsk == ask, let answer else { return }
             self.calendar = answer
@@ -2925,7 +2925,7 @@ struct LivReminderRow: Decodable, Equatable {
 extension BoxModel {
     fileprivate func loadReminders() {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
-        let offset = Int32(TimeZone.current.secondsFromGMT() / 60)
+        let offset = livOffsetMinutes()
         let limit = UInt32(Notify.budget)
         engineRead(LivReminders.self, { to, out in
             liv_view_reminders(to, now, offset, limit, out)
@@ -2981,6 +2981,13 @@ struct LivSearchScreen: Decodable {
 func livCString<R>(_ s: String?, _ body: (UnsafePointer<CChar>?) -> R) -> R {
     guard let s else { return body(nil) }
     return s.withCString { body($0) }
+}
+
+/// The phone's clock against UTC, in minutes — what Rust counts "today"
+/// by, and reads a nameless thing's made name on ("Task · 1 Oct 06:07").
+/// Every verb that hands rows back takes it.
+func livOffsetMinutes() -> Int32 {
+    Int32(TimeZone.current.secondsFromGMT() / 60)
 }
 
 // MARK: - the engine lane: the vocabulary a picker offers

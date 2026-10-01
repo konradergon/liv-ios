@@ -265,7 +265,7 @@ fn board(e: &mut Engine) -> (EntityId, EntityId, EntityId) {
 
 /// One chip row as the screen gets it: (value, count, picked), in order.
 fn chips(e: &Engine, raw: &str, lens: &Lens, property: &str) -> Vec<(String, usize, bool)> {
-    search_screen(e, raw, lens, 0)
+    search_screen(e, raw, lens, 0, 0)
         .unwrap()
         .facets
         .iter()
@@ -277,7 +277,7 @@ fn chips(e: &Engine, raw: &str, lens: &Lens, property: &str) -> Vec<(String, usi
 }
 
 fn rows(e: &Engine, raw: &str) -> Vec<String> {
-    search_screen(e, raw, &Lens::Everything, 0)
+    search_screen(e, raw, &Lens::Everything, 0, 0)
         .unwrap()
         .facets
         .iter()
@@ -345,7 +345,7 @@ fn a_chosen_facet_still_shows_its_siblings() {
 fn an_excluded_value_says_so() {
     let mut e = engine();
     board(&mut e);
-    let screen = search_screen(&e, "-area:Work", &Lens::Everything, 0).unwrap();
+    let screen = search_screen(&e, "-area:Work", &Lens::Everything, 0, 0).unwrap();
     let area = screen.facets.iter().find(|f| f.label == "area").unwrap();
     let work = area.values.iter().find(|v| v.label == "Work").expect("still offered");
     assert!(work.excluded && !work.active);
@@ -379,7 +379,7 @@ fn a_pick_keeps_its_chip_when_nothing_is_left() {
     e.create(kind::NOTE, Some("roof plan"), T0 + 11).unwrap();
 
     let raw = "roof kind:note status:done";
-    assert_eq!(search_screen(&e, raw, &Lens::Everything, 0).unwrap().total, 0);
+    assert_eq!(search_screen(&e, raw, &Lens::Everything, 0, 0).unwrap().total, 0);
     assert_eq!(
         chips(&e, raw, &Lens::Everything, "kind"),
         vec![("Task".into(), 1, false), ("Note".into(), 0, true)]
@@ -532,12 +532,12 @@ fn the_screen_wears_the_lens_before_it_counts_or_cuts() {
         }
     }
     let lens: Lens = mine.iter().copied().collect();
-    let screen = search_screen(&e, "roof", &lens, 2).unwrap();
+    let screen = search_screen(&e, "roof", &lens, 2, 0).unwrap();
     assert_eq!(screen.total, 3, "counted inside the workspace");
     assert_eq!(screen.hits.len(), 2, "then cut to the limit");
     assert!(screen.hits.iter().all(|r| mine.contains(&r.id)));
 
-    let everywhere = search_screen(&e, "roof", &Lens::Everything, 0).unwrap();
+    let everywhere = search_screen(&e, "roof", &Lens::Everything, 0, 0).unwrap();
     assert_eq!(everywhere.total, 5);
     assert_eq!(everywhere.hits.len(), 5, "a limit of 0 is no limit");
 }
@@ -550,10 +550,10 @@ fn create_is_offered_unless_a_hit_is_named_exactly_the_words() {
     e.create(kind::NOTE, Some("Buy milk"), T0).unwrap();
     e.create(kind::NOTE, Some("Buy milk and eggs"), T0 + 1).unwrap();
 
-    assert!(search_screen(&e, "buy milk", &Lens::Everything, 0).unwrap().exact);
-    assert!(search_screen(&e, "BUY MILK kind:note", &Lens::Everything, 0).unwrap().exact);
-    assert!(!search_screen(&e, "buy", &Lens::Everything, 0).unwrap().exact);
-    assert!(!search_screen(&e, "kind:note", &Lens::Everything, 0).unwrap().exact, "no words, nothing to make");
+    assert!(search_screen(&e, "buy milk", &Lens::Everything, 0, 0).unwrap().exact);
+    assert!(search_screen(&e, "BUY MILK kind:note", &Lens::Everything, 0, 0).unwrap().exact);
+    assert!(!search_screen(&e, "buy", &Lens::Everything, 0, 0).unwrap().exact);
+    assert!(!search_screen(&e, "kind:note", &Lens::Everything, 0, 0).unwrap().exact, "no words, nothing to make");
 }
 
 #[test]
@@ -561,7 +561,7 @@ fn the_screen_gets_rows_in_rank_order() {
     let mut e = engine();
     e.create(kind::NOTE, Some("Roofing notes"), T0).unwrap();
     e.create(kind::NOTE, Some("Roof"), T0 + 1).unwrap();
-    let screen = search_screen(&e, "roof", &Lens::Everything, 0).unwrap();
+    let screen = search_screen(&e, "roof", &Lens::Everything, 0, 0).unwrap();
     let titles: Vec<&str> = screen.hits.iter().map(|r| r.title.as_str()).collect();
     assert_eq!(titles, vec!["Roof", "Roofing notes"], "a whole name beats a prefix");
 }

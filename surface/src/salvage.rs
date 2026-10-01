@@ -33,10 +33,10 @@ use crate::{row, visible, Lens, Row};
 ///
 /// Archived is NOT trashed and is not here. Archiving is filing something
 /// away; trashing is throwing it out, and the two screens are different.
-pub fn trash(e: &Engine) -> Result<Vec<Row>, LogError> {
+pub fn trash(e: &Engine, offset_min: i32) -> Result<Vec<Row>, LogError> {
     let mut rows = Vec::new();
     for id in e.with_value(prop::TRASHED, &Value::Bool(true))? {
-        let r = row(e, id)?;
+        let r = row(e, id, offset_min)?;
         if r.trashed {
             rows.push(r);
         }
@@ -72,12 +72,12 @@ pub struct NoteTask {
 /// Notes only, and only ones that are not already a task or an event:
 /// their own body lines would double-count in the view that already lists
 /// them as things in their own right.
-pub fn note_tasks(e: &Engine, lens: &Lens) -> Result<Vec<NoteTask>, LogError> {
+pub fn note_tasks(e: &Engine, lens: &Lens, offset_min: i32) -> Result<Vec<NoteTask>, LogError> {
     let mut out = Vec::new();
     let mut ids = e.all_entities()?;
     ids.sort();
     for note in ids {
-        let r = row(e, note)?;
+        let r = row(e, note, offset_min)?;
         if !visible(&r, lens) {
             continue;
         }

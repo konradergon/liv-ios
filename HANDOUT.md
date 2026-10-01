@@ -13,9 +13,9 @@ product page is `design/what-liv-is-for.md`.
 
 ## 2. Where things stand
 
-- **Branch** `polish-pass-lmkl30`, pushed up to `fd111fa` (reminders in
-  Rust). Uncommitted: the owner's pre-sync UI list of 1 Oct — search
-  filters, the calendar bin, the card pill, the editor (changelog).
+- **Branch** `polish-pass-lmkl30`, pushed up to `d30b9d1` (the owner's
+  pre-sync UI list). Uncommitted: web links in notes, and made names on
+  the phone's clock (changelog, 1 Oct).
 - **Every screen reads Rust's answers**; Swift draws. A refresh reads the
   library and the screen on show, nothing else. The clerk's sweep is
   linear again. Reminders are Rust's too (`liv_view_reminders`). The
@@ -111,10 +111,13 @@ included. Filing asks where first; other kinds sit behind "Not a note…".
 It ignores the workspace, so nothing made in the wrong one vanishes.
 
 **Notes and the editor.** Markdown syntax shows only on the caret's line;
-links show as their name. Making a link opens Search. Six heading sizes,
-`#` largest to `######` at body size; seven `#` is text. A code block is
-monospace on a tint, nothing in it read as markdown. A nameless thing
-reads as its kind and time ("Note · 29 Sep 17:26"). History has Restore.
+links show as their name. Making a link opens Search. Web addresses and
+`[text](url)` are links too, stored as typed; a tap opens Safari (a
+long press still places the caret). Six heading sizes, `#` largest to
+`######` at body size; seven `#` is text. A code block is monospace on a
+tint, nothing in it read as markdown. A nameless thing reads as its kind
+and when it was made, on the phone's clock ("Note · 29 Sep 17:26").
+History has Restore.
 
 **Calendar.** The timeline is the screen, the month is a jump card. Hold
 to place, drag, release to create; hold a block to move it or drop it on
@@ -152,11 +155,11 @@ gradients, area tiles, bottom fades.
 - Light mode renders faintly; nobody has drawn it.
 - A link to a trashed thing turns into plain text on save and does not
   come back.
-- A nameless thing's title ("Task · 1 Oct 04:07") is in UTC, not the
-  phone's time: the made name needs the phone's offset, and four
-  row-returning verbs do not take one. A door change — the owner's call.
-- In notes: URLs are not links, `_x_` and `__x__` stay literal, quotes and
-  callouts are only grey text.
+- A made name reads the phone's offset as it is NOW: across a
+  daylight-saving change, a nameless thing made before it reads an hour
+  off. Fixing that needs the zone's rules in Rust.
+- In notes: `_x_` and `__x__` stay literal; quotes and callouts are only
+  grey text.
 - Pages scanned sideways are read rotated.
 - Deferred by name: templates, a replacement for filters, the desktop
   shell, and everything in §2 gone with `core/`.

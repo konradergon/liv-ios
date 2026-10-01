@@ -27,7 +27,7 @@ fn the_trash_is_the_one_surface_that_wants_what_the_rest_throw_away() {
     e.set(filed, prop::ARCHIVED, Value::Bool(true), T0 + 3).unwrap();
     e.trash(gone, T0 + 4).unwrap();
 
-    let rows = trash(&e).unwrap();
+    let rows = trash(&e, 0).unwrap();
     let ids: Vec<EntityId> = rows.iter().map(|r| r.id).collect();
     assert_eq!(ids, vec![gone], "only the trashed one");
     assert!(!ids.contains(&live));
@@ -38,7 +38,7 @@ fn the_trash_is_the_one_surface_that_wants_what_the_rest_throw_away() {
 
     // And restoring takes it back off the list.
     e.restore(gone, T0 + 5).unwrap();
-    assert!(trash(&e).unwrap().is_empty());
+    assert!(trash(&e, 0).unwrap().is_empty());
 }
 
 /// Newest first BY WHEN IT WAS THROWN AWAY: the thing you just deleted is
@@ -56,7 +56,7 @@ fn the_trash_is_newest_thrown_away_first() {
     e.trash(new, T0 + 10).unwrap();
     e.trash(old, T0 + 20).unwrap();
 
-    let rows = trash(&e).unwrap();
+    let rows = trash(&e, 0).unwrap();
     let ids: Vec<EntityId> = rows.iter().map(|r| r.id).collect();
     assert_eq!(ids, vec![old, new], "the one thrown away last comes first");
     assert_eq!(rows[0].touched_ms, (T0 + 20) as i64, "a row says when it went");
@@ -86,7 +86,7 @@ fn an_open_checkbox_inside_a_note_is_listed_without_becoming_a_thing() {
         T0 + 1,
     );
 
-    let found = note_tasks(&e, &Lens::Everything).unwrap();
+    let found = note_tasks(&e, &Lens::Everything, 0).unwrap();
     let words: Vec<&str> = found.iter().map(|t| t.text.as_str()).collect();
     assert_eq!(words, vec!["book the ferry", "call the surveyor"], "and never the done one");
     assert_eq!(found[0].note, note);
@@ -112,7 +112,7 @@ fn a_task_does_not_contribute_its_own_body_lines() {
         ],
         T0 + 1,
     );
-    assert!(note_tasks(&e, &Lens::Everything).unwrap().is_empty());
+    assert!(note_tasks(&e, &Lens::Everything, 0).unwrap().is_empty());
 }
 
 #[test]
@@ -128,9 +128,9 @@ fn a_trashed_note_contributes_no_lines() {
         ],
         T0 + 1,
     );
-    assert_eq!(note_tasks(&e, &Lens::Everything).unwrap().len(), 1);
+    assert_eq!(note_tasks(&e, &Lens::Everything, 0).unwrap().len(), 1);
     e.trash(note, T0 + 2).unwrap();
-    assert!(note_tasks(&e, &Lens::Everything).unwrap().is_empty());
+    assert!(note_tasks(&e, &Lens::Everything, 0).unwrap().is_empty());
 }
 
 /// An empty checkbox is someone mid-sentence, not a task.
@@ -148,7 +148,7 @@ fn an_empty_checkbox_is_not_a_task() {
         ],
         T0 + 1,
     );
-    assert!(note_tasks(&e, &Lens::Everything).unwrap().is_empty());
+    assert!(note_tasks(&e, &Lens::Everything, 0).unwrap().is_empty());
 }
 
 /// **A trash state two devices disagree about is not a trash state.**
@@ -188,7 +188,7 @@ fn a_contended_trash_state_is_not_the_trash() {
     assert!(!e.is_trashed(id).unwrap(), "and `one` refuses to pick");
 
     assert!(
-        trash(&e).unwrap().is_empty(),
+        trash(&e, 0).unwrap().is_empty(),
         "a thing every other surface still shows must not also be in the trash"
     );
 }
@@ -211,7 +211,7 @@ fn a_row_carries_the_words_it_draws() {
     e.set(t, prop::STATUS, Value::Ref(status::DOING), T0 + 1).unwrap();
     e.set(t, prop::AREA, Value::Ref(home), T0 + 2).unwrap();
 
-    let r = liv_surface::row(&e, t).unwrap();
+    let r = liv_surface::row(&e, t, 0).unwrap();
     // Lowercase for the kind: the same spelling `type:task` uses, so one
     // word means one thing everywhere.
     assert_eq!(r.kind_word.as_deref(), Some("task"));
@@ -222,11 +222,11 @@ fn a_row_carries_the_words_it_draws() {
 
     // A renamed status shows its new name.
     e.set(status::DOING, prop::NAME, Value::Text("In progress".into()), T0 + 3).unwrap();
-    assert_eq!(liv_surface::row(&e, t).unwrap().status_word.as_deref(), Some("In progress"));
+    assert_eq!(liv_surface::row(&e, t, 0).unwrap().status_word.as_deref(), Some("In progress"));
 
     // And a thing with none of them says so rather than guessing.
     let bare = e.capture("just a thought", T0 + 4).unwrap();
-    let b = liv_surface::row(&e, bare).unwrap();
+    let b = liv_surface::row(&e, bare, 0).unwrap();
     assert_eq!(b.kind_word, None);
     assert_eq!(b.status_word, None);
 }
@@ -238,5 +238,5 @@ fn a_user_declared_kind_gets_a_word_the_same_way() {
     let mut e = engine();
     let mine = e.create(kind::KIND, Some("Recipe"), T0).unwrap();
     let thing = e.create(mine, Some("Bread"), T0 + 1).unwrap();
-    assert_eq!(liv_surface::row(&e, thing).unwrap().kind_word.as_deref(), Some("recipe"));
+    assert_eq!(liv_surface::row(&e, thing, 0).unwrap().kind_word.as_deref(), Some("recipe"));
 }

@@ -119,9 +119,16 @@ int32_t liv_view_today(const char *path, int64_t now_ms, int32_t offset_min,
    CHANGED IN PLACE 2026-09-30 (owner's word): the app had never called
    this verb, and it had fallen behind the screen. Rows gained "late"
    (open task, day passed) on every surface; it is set by the three told
-   what day it is — Today, Tasks and the library — and false on the rest. */
+   what day it is — Today, Tasks and the library — and false on the rest.
+
+   CHANGED IN PLACE 2026-10-01 (owner's word), with liv_view_day,
+   liv_view_search and liv_view_trash: `offset_min` is the phone's clock
+   against UTC (as liv_view_today). A row with no name and no body is
+   titled by its kind and when it was made — "Task · 1 Oct 06:07" — and
+   that time is read on the phone's clock; it was UTC. */
 int32_t liv_view_tasks(const char *path, const char *project,
-                       int32_t today, const char *lens, char **out);
+                       int32_t today, int32_t offset_min, const char *lens,
+                       char **out);
 
 /* The library, in one pass over the box: every live row, the Notes and
    Unsorted lists as ids into it, and the count beside each view in the
@@ -165,9 +172,10 @@ int32_t liv_view_reminders(const char *path, int64_t now_ms, int32_t offset_min,
 
    CHANGED IN PLACE 2026-09-30 (owner's word): it answered one day with
    its blocks already laid out, the app had never called it, and the
-   calendar needs a range — the month card's dots — more than a layout. */
+   calendar needs a range — the month card's dots — more than a layout.
+   `offset_min` as liv_view_tasks (2026-10-01). */
 int32_t liv_view_day(const char *path, int32_t from_day, int32_t to_day,
-                     const char *lens, char **out);
+                     int32_t offset_min, const char *lens, char **out);
 
 /* Drop every held connection. Call before moving or replacing a box file.
    Not thread-safe against a liv_view_* call in flight. */
@@ -488,13 +496,15 @@ int32_t liv_kind_named(const char *path, const char *name, char **out);
    only qualifiers is never exact.
 
    `limit` BOUNDS THE HITS AND NEVER THE FACETS. A facet count is over
-   everything the query matches: a row saying "Work 12" when the list
-   shows 10 is telling the truth about the box, and a count that changed
-   with how far the user had scrolled would be useless for pivoting. A
-   facet count also excludes its OWN property's constraints, or a facet
-   you have already picked shows its own count and nothing else. */
+   everything the query matches inside the lens, words included: a row
+   saying "Work 12" when the list shows 10 is telling the truth, and a
+   count that changed with how far the user had scrolled would be useless
+   for pivoting. A facet count also excludes its OWN property's
+   constraints, or a facet you have already picked shows its own count
+   and nothing else; a picked value keeps its chip even at zero.
+   `offset_min` as liv_view_tasks (2026-10-01). */
 int32_t liv_view_search(const char *path, const char *query, uint32_t limit,
-                        const char *lens, char **out);
+                        int32_t offset_min, const char *lens, char **out);
 
 /* The ids a LENS admits: {"ids":["<hex>"…], "terms":[…]}
 
@@ -611,8 +621,9 @@ int32_t liv_probe_box(const char *path, char **out);
    THE ONE SURFACE THAT WANTS THE ROWS THE OTHERS THROW AWAY, and it
    ignores the lens on purpose: the trash is the trash, and a workspace
    filter hiding some of it would leave someone unable to find the thing
-   they are trying to get back. Archived is NOT trashed and is not here. */
-int32_t liv_view_trash(const char *path, char **out);
+   they are trying to get back. Archived is NOT trashed and is not here.
+   `offset_min` as liv_view_tasks (2026-10-01). */
+int32_t liv_view_trash(const char *path, int32_t offset_min, char **out);
 
 /* The properties a person can put on something:
    [{"id":"<hex>","name","holds","many"}…]

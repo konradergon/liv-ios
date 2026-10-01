@@ -191,12 +191,12 @@ impl Liv {
                 liv_view_today(self.p(), now as i64, local_offset_min(), std::ptr::null(), out)
             })?),
             ("tasks", []) => show(call(|out| unsafe {
-                liv_view_tasks(self.p(), std::ptr::null(), today(), std::ptr::null(), out)
+                liv_view_tasks(self.p(), std::ptr::null(), today(), local_offset_min(), std::ptr::null(), out)
             })?),
-            ("trash", []) => show(call(|out| unsafe { liv_view_trash(self.p(), out) })?),
+            ("trash", []) => show(call(|out| unsafe { liv_view_trash(self.p(), local_offset_min(), out) })?),
             ("day", [date]) => {
                 let day = day_of(date)?;
-                show(call(|out| unsafe { liv_view_day(self.p(), day, day, std::ptr::null(), out) })?)
+                show(call(|out| unsafe { liv_view_day(self.p(), day, day, local_offset_min(), std::ptr::null(), out) })?)
             }
             ("cells" | "links" | "content" | "versions", [id]) => {
                 let id = self.id(id)?;
@@ -219,7 +219,7 @@ impl Liv {
             ("search", words) => {
                 let q = c(&words.join(" "));
                 show(call(|out| unsafe {
-                    liv_view_search(self.p(), q.as_ptr(), 50, std::ptr::null(), out)
+                    liv_view_search(self.p(), q.as_ptr(), 50, local_offset_min(), std::ptr::null(), out)
                 })?)
             }
             ("library", []) => show(self.library()?),
@@ -301,7 +301,7 @@ impl Liv {
     fn list(&self, all: bool) -> Result<(), String> {
         let mut rows: Vec<J> = self.library()?["all"].as_array().cloned().unwrap_or_default();
         if all {
-            let bin = call(|out| unsafe { liv_view_trash(self.p(), out) })?;
+            let bin = call(|out| unsafe { liv_view_trash(self.p(), local_offset_min(), out) })?;
             rows.extend(bin.as_array().cloned().unwrap_or_default());
         }
         let text = |r: &J, k: &str| r[k].as_str().unwrap_or("").to_owned();
@@ -344,17 +344,17 @@ impl Liv {
             "reminders": call(|o| unsafe {
                 liv_view_reminders(p, now_ms() as i64, local_offset_min(), 64, o)
             })?,
-            "trash": call(|o| unsafe { liv_view_trash(p, o) })?,
+            "trash": call(|o| unsafe { liv_view_trash(p, local_offset_min(), o) })?,
             "suggestions": call(|o| unsafe { liv_sweep(p, o) })?,
             "workspaces": call(|o| unsafe { liv_workspaces(p, o) })?,
             "tasks": call(|o| unsafe {
-                liv_view_tasks(p, std::ptr::null(), today(), std::ptr::null(), o)
+                liv_view_tasks(p, std::ptr::null(), today(), local_offset_min(), std::ptr::null(), o)
             })?,
             "today": call(|o| unsafe {
                 liv_view_today(p, now_ms() as i64, local_offset_min(), std::ptr::null(), o)
             })?,
             "calendar": call(|o| unsafe {
-                liv_view_day(p, today() - 40, today() + 60, std::ptr::null(), o)
+                liv_view_day(p, today() - 40, today() + 60, local_offset_min(), std::ptr::null(), o)
             })?,
             "assist": call(|o| unsafe { liv_assist(p, o) })?,
             "properties": call(|o| unsafe { liv_properties(p, o) })?,
@@ -431,7 +431,7 @@ impl Liv {
         let mut ids: Vec<String> = Vec::new();
         for list in [
             self.library()?["all"].clone(),
-            call(|out| unsafe { liv_view_trash(self.p(), out) })?,
+            call(|out| unsafe { liv_view_trash(self.p(), local_offset_min(), out) })?,
         ] {
             for r in list.as_array().into_iter().flatten() {
                 if let Some(id) = r["id"].as_str().filter(|id| id.contains(&raw)) {

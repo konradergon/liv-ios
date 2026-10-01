@@ -53,6 +53,8 @@ enum InlineRun: Equatable {
     case strike(NSRange)
     case code(NSRange)  // content between backticks
     case refToken(NSRange, name: NSRange?)  // whole [[…]]; name part if any
+    case url(NSRange)  // a bare web address, as typed
+    case link(NSRange, text: NSRange, url: NSRange)  // the whole [text](url)
 }
 
 enum MarkScan {
@@ -216,6 +218,26 @@ enum MarkScan {
                     }
                 }
             }
+            // [text](url) — a markdown link. Never `[[`, which is ours.
+            if c == 0x5B, !(i + 1 < u.count && u[i + 1] == 0x5B),
+                let mid = find([0x5D, 0x28], from: i + 1), mid > i + 1,
+                let close = find([0x29], from: mid + 2), close > mid + 2,
+                !u[(mid + 2)..<close].contains(where: { $0 == 0x20 || $0 == 0x09 })
+            {
+                out.append(
+                    .link(
+                        NSRange(location: i, length: close + 1 - i),
+                        text: NSRange(location: i + 1, length: mid - i - 1),
+                        url: NSRange(location: mid + 2, length: close - mid - 2)))
+                i = close + 1
+                continue
+            }
+            // A bare web address, at the start of a word.
+            if let end = webEnd(u, at: i) {
+                out.append(.url(NSRange(location: i, length: end - i)))
+                i = end
+                continue
+            }
             // ***bold italic*** — tested before `**`, which it starts with.
             if c == 0x2A, i + 2 < u.count, u[i + 1] == 0x2A, u[i + 2] == 0x2A,
                 let close = find([0x2A, 0x2A, 0x2A], from: i + 3), close > i + 3
@@ -259,6 +281,47 @@ enum MarkScan {
             i += 1
         }
         return out
+    }
+}
+
+// MARK: - web addresses
+
+extension MarkScan {
+    /// Where a bare web address starting at `i` ends, or nil when none
+    /// starts there: `https://`, `http://` or `www.`, at the start of a
+    /// word, up to the next space — less the punctuation a sentence puts
+    /// after it. A `)` stays when the address opened one (Wikipedia's).
+    static func webEnd(_ u: [UInt16], at i: Int) -> Int? {
+        if i > 0, ![0x20, 0x09, 0x28, 0x3C, 0x22, 0x27].contains(u[i - 1]) { return nil }
+        let rest = u[i...]
+        guard
+            let prefix = ["https://", "http://", "www."].first(where: {
+                rest.starts(with: Array($0.utf16))
+            })
+        else { return nil }
+        var j = i
+        while j < u.count, u[j] != 0x20, u[j] != 0x09 { j += 1 }
+        while j > i {
+            let last = u[j - 1]
+            if [0x2E, 0x2C, 0x3B, 0x3A, 0x21, 0x3F, 0x27, 0x22, 0x5D, 0x7D, 0x3E].contains(last) {
+                j -= 1
+                continue
+            }
+            if last == 0x29,
+                u[i..<j].filter({ $0 == 0x29 }).count > u[i..<j].filter({ $0 == 0x28 }).count
+            {
+                j -= 1
+                continue
+            }
+            break
+        }
+        return j - i > prefix.utf16.count ? j : nil
+    }
+
+    /// What a tap on a web link opens: the address as typed, with
+    /// `https://` in front of a bare `www.`.
+    static func webAddress(_ raw: String) -> String {
+        raw.hasPrefix("www.") ? "https://" + raw : raw
     }
 }
 
@@ -817,7 +880,11 @@ func livDisplayTitle(_ raw: String) -> String {
                 skip.append(
                     NSRange(location: NSMaxRange(name), length: NSMaxRange(whole) - NSMaxRange(name)))
             }
-        case .bold, .italic, .boldItalic, .strike, .code: break
+        case .link(let whole, let text, _):
+            skip.append(NSRange(location: whole.location, length: text.location - whole.location))
+            skip.append(
+                NSRange(location: NSMaxRange(text), length: NSMaxRange(whole) - NSMaxRange(text)))
+        case .bold, .italic, .boldItalic, .strike, .code, .url: break
         }
     }
     skip.sort { $0.location < $1.location }
@@ -1162,6 +1229,41 @@ func livEditorSelfCheck() -> [String] {
         EditOps.returnKey(
             doc as String,
             selection: NSRange(location: NSMaxRange(doc.range(of: "- [ ] no")), length: 0)) == nil)
+    // LINKS TO THE WEB (2026-10-01): a bare address and a markdown link
+    // are runs of their own, and stored as the characters typed.
+    let bare = MarkScan.inline("see https://example.com/a?b=1, then", from: 0)
+    check(
+        "a bare address is found, its comma left out",
+        bare == [.url(NSRange(location: 4, length: 25))], "\(bare)")
+    check(
+        "www is an address",
+        MarkScan.inline("go www.liv.app now", from: 0) == [.url(NSRange(location: 3, length: 11))])
+    check("inside a word is no address", MarkScan.inline("xhttps://no", from: 0).isEmpty)
+    check("a scheme alone is no address", MarkScan.inline("https:// x", from: 0).isEmpty)
+    check(
+        "an address keeps the brackets it opened",
+        MarkScan.inline("(https://w.org/a_(b))", from: 0)
+            == [.url(NSRange(location: 1, length: 19))])
+    let md = MarkScan.inline("a [Liv](https://liv.app) b", from: 0)
+    check(
+        "a markdown link is found",
+        md == [
+            .link(
+                NSRange(location: 2, length: 22), text: NSRange(location: 3, length: 3),
+                url: NSRange(location: 8, length: 15))
+        ], "\(md)")
+    check(
+        "links are stored as typed",
+        SpanText.textToSpans("a [Liv](https://liv.app) and https://x.io")
+            == [.text("a [Liv](https://liv.app) and https://x.io", marks: 0)],
+        "\(SpanText.textToSpans("a [Liv](https://liv.app) and https://x.io"))")
+    check(
+        "a link's title is its words", livDisplayTitle("[Liv](https://liv.app) notes") == "Liv notes",
+        livDisplayTitle("[Liv](https://liv.app) notes"))
+    check(
+        "a bare www opens on https",
+        MarkScan.webAddress("www.liv.app") == "https://www.liv.app"
+            && MarkScan.webAddress("http://x.io") == "http://x.io")
     check(
         "the codec stores a block as code",
         SpanText.textToSpans("```\n# x\n```") == [.brk(.code(lang: nil)), .text("# x", marks: 0)],

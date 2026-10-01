@@ -116,7 +116,7 @@ fn the_error_channel_says_which_thing_went_wrong() {
     let bad_id = CString::new("not-hex").unwrap();
     assert_eq!(
         call(|out| unsafe {
-            liv_view_tasks(c.as_ptr(), bad_id.as_ptr(), DAY, std::ptr::null(), out)
+            liv_view_tasks(c.as_ptr(), bad_id.as_ptr(), DAY, 0, std::ptr::null(), out)
         }),
         Err(LIV_ERR_ARG),
         "a project that is not an id is an argument error, not an unfiltered list"
@@ -170,7 +170,7 @@ fn a_null_lens_means_everything_and_an_empty_one_means_nothing() {
 
     // Every task the Tasks screen would list, whatever group it is in.
     let listed = |lens: *const std::ffi::c_char| -> Vec<String> {
-        let v = call(|out| unsafe { liv_view_tasks(c.as_ptr(), std::ptr::null(), DAY, lens, out) })
+        let v = call(|out| unsafe { liv_view_tasks(c.as_ptr(), std::ptr::null(), DAY, 0, lens, out) })
             .unwrap();
         v["groups"].as_array().unwrap().iter().flat_map(|g| titles(&g["rows"])).collect()
     };
@@ -209,7 +209,7 @@ fn tasks_come_back_grouped_with_the_groups_own_facts() {
     let c = CString::new(path.to_str().unwrap()).unwrap();
 
     let v = call(|out| unsafe {
-        liv_view_tasks(c.as_ptr(), std::ptr::null(), DAY, std::ptr::null(), out)
+        liv_view_tasks(c.as_ptr(), std::ptr::null(), DAY, 0, std::ptr::null(), out)
     })
     .unwrap();
     let groups = v["groups"].as_array().unwrap();
@@ -239,7 +239,7 @@ fn tasks_come_back_grouped_with_the_groups_own_facts() {
     // Filtering by project, by id.
     let id = CString::new(roof.hex()).unwrap();
     let v = call(|out| unsafe {
-        liv_view_tasks(c.as_ptr(), id.as_ptr(), DAY, std::ptr::null(), out)
+        liv_view_tasks(c.as_ptr(), id.as_ptr(), DAY, 0, std::ptr::null(), out)
     })
     .unwrap();
     assert_eq!(v["groups"].as_array().unwrap().len(), 2);
@@ -267,7 +267,7 @@ fn the_calendar_comes_back_by_day() {
     unsafe { liv_view_close_all() };
     let c = CString::new(path.to_str().unwrap()).unwrap();
 
-    let v = call(|out| unsafe { liv_view_day(c.as_ptr(), DAY - 3, DAY + 3, std::ptr::null(), out) })
+    let v = call(|out| unsafe { liv_view_day(c.as_ptr(), DAY - 3, DAY + 3, 0, std::ptr::null(), out) })
         .unwrap();
     let days = v.as_array().unwrap();
     assert_eq!(days.len(), 1, "only a day with something on it");
@@ -332,7 +332,7 @@ fn the_payload_is_the_screen_rather_than_the_box() {
     let c = CString::new(path.to_str().unwrap()).unwrap();
 
     let mut out: *mut std::ffi::c_char = std::ptr::null_mut();
-    assert_eq!(unsafe { liv_view_day(c.as_ptr(), DAY, DAY, std::ptr::null(), &mut out) }, LIV_OK);
+    assert_eq!(unsafe { liv_view_day(c.as_ptr(), DAY, DAY, 0, std::ptr::null(), &mut out) }, LIV_OK);
     let day_bytes = unsafe { CStr::from_ptr(out) }.to_bytes().len();
     unsafe { liv_ffi::liv_string_free(out) };
 
@@ -406,7 +406,7 @@ fn one_days_view_stays_flat_as_the_box_grows() {
     // Same answer in both, which is what makes the ratio mean anything.
     for c in [&small, &large] {
         let cc = CString::new(c.to_str().unwrap()).unwrap();
-        let v = call(|out| unsafe { liv_view_day(cc.as_ptr(), DAY, DAY, std::ptr::null(), out) })
+        let v = call(|out| unsafe { liv_view_day(cc.as_ptr(), DAY, DAY, 0, std::ptr::null(), out) })
             .unwrap();
         assert_eq!(v[0]["timed"].as_array().unwrap().len(), 10);
     }
@@ -415,7 +415,7 @@ fn one_days_view_stays_flat_as_the_box_grows() {
     let once = |c: &CString| {
         let start = Instant::now();
         let mut out: *mut std::ffi::c_char = std::ptr::null_mut();
-        assert_eq!(unsafe { liv_view_day(c.as_ptr(), DAY, DAY, std::ptr::null(), &mut out) }, LIV_OK);
+        assert_eq!(unsafe { liv_view_day(c.as_ptr(), DAY, DAY, 0, std::ptr::null(), &mut out) }, LIV_OK);
         unsafe { liv_ffi::liv_string_free(out) };
         start.elapsed().as_secs_f64()
     };
@@ -461,7 +461,7 @@ fn a_scrap_made_on_the_engine_keeps_its_first_line_as_its_title() {
     unsafe { liv_view_close_all() };
     let c = CString::new(path.to_str().unwrap()).unwrap();
 
-    let v = call(|out| unsafe { liv_view_day(c.as_ptr(), day, day, std::ptr::null(), out) })
+    let v = call(|out| unsafe { liv_view_day(c.as_ptr(), day, day, 0, std::ptr::null(), out) })
         .unwrap();
     let timed = v[0]["timed"].as_array().unwrap();
     assert_eq!(timed.len(), 2, "both are on the day");
@@ -470,6 +470,57 @@ fn a_scrap_made_on_the_engine_keeps_its_first_line_as_its_title() {
     assert_eq!(timed[0]["untitled"], false);
     assert_eq!(timed[1]["untitled"], true, "still flagged, so it can draw quietly");
     assert_eq!(timed[1]["title"], "Task · 13 Sep 10:30");
+
+    unsafe { liv_view_close_all() };
+}
+
+/// **A made name is in the phone's time**, on every verb that hands rows
+/// back (owner, 2026-10-01: a task made at 06:07 in Stockholm read
+/// "Task · 1 Oct 04:07" — UTC). The offset rides with each call, as it
+/// already did for Today, the library and reminders.
+#[test]
+fn every_row_verb_names_a_nameless_thing_on_the_phones_clock() {
+    use liv_ffi::finding::{liv_view_search, liv_view_trash};
+    let path = box_path("phone_clock");
+    let day = days_from_civil(2026, 10, 1);
+    {
+        let mut e = Engine::open_local(&path).unwrap();
+        let task = e.create(kind::TASK, None, at(day, 4, 7) as u64).unwrap();
+        let due = Value::Date(DateSpec::Instant { ms: at(day, 9, 0), tz: 0 });
+        e.set(task, prop::DUE, due, at(day, 4, 8) as u64).unwrap();
+        let gone = e.create(kind::NOTE, None, at(day, 4, 9) as u64).unwrap();
+        e.trash(gone, at(day, 4, 10) as u64).unwrap();
+    }
+    unsafe { liv_view_close_all() };
+    let c = CString::new(path.to_str().unwrap()).unwrap();
+    let ahead = 120; // Stockholm, summer time
+    let made = "Task · 1 Oct 06:07";
+
+    let tasks = call(|out| unsafe {
+        liv_view_tasks(c.as_ptr(), std::ptr::null(), day, ahead, std::ptr::null(), out)
+    })
+    .unwrap();
+    let rows: Vec<String> = tasks["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|g| titles(&g["rows"]))
+        .collect();
+    assert_eq!(rows, vec![made], "Tasks");
+
+    let days = call(|out| unsafe { liv_view_day(c.as_ptr(), day, day, ahead, std::ptr::null(), out) })
+        .unwrap();
+    assert_eq!(titles(&days[0]["timed"]), vec![made], "the calendar");
+
+    let q = CString::new("kind:task").unwrap();
+    let found = call(|out| unsafe {
+        liv_view_search(c.as_ptr(), q.as_ptr(), 0, ahead, std::ptr::null(), out)
+    })
+    .unwrap();
+    assert_eq!(titles(&found["hits"]), vec![made], "search");
+
+    let trash = call(|out| unsafe { liv_view_trash(c.as_ptr(), ahead, out) }).unwrap();
+    assert_eq!(titles(&trash), vec!["Note · 1 Oct 06:09"], "the trash");
 
     unsafe { liv_view_close_all() };
 }
@@ -548,21 +599,21 @@ fn the_search_screen_comes_back_as_rows_inside_the_lens() {
     let c = CString::new(path.to_str().unwrap()).unwrap();
     let q = CString::new("roof").unwrap();
 
-    let v = call(|out| unsafe { liv_view_search(c.as_ptr(), q.as_ptr(), 0, std::ptr::null(), out) })
+    let v = call(|out| unsafe { liv_view_search(c.as_ptr(), q.as_ptr(), 0, 0, std::ptr::null(), out) })
         .unwrap();
     assert_eq!(titles(&v["hits"]), vec!["Roof", "Roof tiles"]);
     assert_eq!(v["total"], 2);
     assert_eq!(v["exact"], true, "one is called exactly that");
 
     let lens = CString::new(format!("[\"{}\"]", mine.hex())).unwrap();
-    let v = call(|out| unsafe { liv_view_search(c.as_ptr(), q.as_ptr(), 0, lens.as_ptr(), out) })
+    let v = call(|out| unsafe { liv_view_search(c.as_ptr(), q.as_ptr(), 0, 0, lens.as_ptr(), out) })
         .unwrap();
     assert_eq!(titles(&v["hits"]), vec!["Roof"]);
     assert_eq!(v["total"], 1);
 
     let bad = CString::new("not a list").unwrap();
     assert_eq!(
-        call(|out| unsafe { liv_view_search(c.as_ptr(), q.as_ptr(), 0, bad.as_ptr(), out) }),
+        call(|out| unsafe { liv_view_search(c.as_ptr(), q.as_ptr(), 0, 0, bad.as_ptr(), out) }),
         Err(LIV_ERR_ARG)
     );
     unsafe { liv_view_close_all() };
@@ -619,16 +670,16 @@ fn one_refresh_stays_linear_in_the_box() {
             .unwrap();
         call(|out| unsafe { liv_view_reminders(p.as_ptr(), at(DAY, 9, 0), 0, 64, out) })
             .unwrap();
-        call(|out| unsafe { liv_view_trash(p.as_ptr(), out) }).unwrap();
+        call(|out| unsafe { liv_view_trash(p.as_ptr(), 0, out) }).unwrap();
         call(|out| unsafe { liv_sweep(p.as_ptr(), out) }).unwrap();
         call(|out| unsafe { liv_workspaces(p.as_ptr(), out) }).unwrap();
         call(|out| unsafe {
-            liv_view_tasks(p.as_ptr(), std::ptr::null(), DAY, std::ptr::null(), out)
+            liv_view_tasks(p.as_ptr(), std::ptr::null(), DAY, 0, std::ptr::null(), out)
         })
         .unwrap();
         call(|out| unsafe { liv_view_today(p.as_ptr(), at(DAY, 9, 0), 0, std::ptr::null(), out) })
             .unwrap();
-        call(|out| unsafe { liv_view_day(p.as_ptr(), DAY - 40, DAY + 60, std::ptr::null(), out) })
+        call(|out| unsafe { liv_view_day(p.as_ptr(), DAY - 40, DAY + 60, 0, std::ptr::null(), out) })
             .unwrap();
         call(|out| unsafe { liv_assist(p.as_ptr(), out) }).unwrap();
         call(|out| unsafe { liv_properties(p.as_ptr(), out) }).unwrap();

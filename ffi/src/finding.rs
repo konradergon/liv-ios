@@ -58,6 +58,7 @@ fn text_of<'a>(p: *const c_char) -> Result<&'a str, i32> {
 /// **The lens is applied before counting and cutting**, so "Showing 200 of
 /// 1,800" is about the rows on screen. `lens` is a JSON array of hex ids,
 /// or null for everything — the same as every `liv_view_*` verb.
+/// `offset_min` is the phone's clock against UTC, for made names.
 ///
 /// # Safety
 /// `path` and `query` must be valid C strings, `lens` null or one; `out`
@@ -67,6 +68,7 @@ pub unsafe extern "C" fn liv_view_search(
     path: *const c_char,
     query: *const c_char,
     limit: u32,
+    offset_min: i32,
     lens: *const c_char,
     out: *mut *mut c_char,
 ) -> i32 {
@@ -79,7 +81,8 @@ pub unsafe extern "C" fn liv_view_search(
         Err(e) => return e,
     };
     match with_engine(path, |e| {
-        let s = search::search_screen(e, raw, &lens, limit as usize).map_err(|_| LIV_ERR_READ)?;
+        let s = search::search_screen(e, raw, &lens, limit as usize, offset_min)
+            .map_err(|_| LIV_ERR_READ)?;
         Ok(json!({
             "hits": rows_json(&s.hits),
             "total": s.total,
@@ -375,13 +378,18 @@ pub unsafe extern "C" fn liv_assist(path: *const c_char, out: *mut *mut c_char) 
 /// ignores the lens on purpose: the trash is the trash, and a workspace
 /// filter hiding some of it would leave someone unable to find the thing
 /// they are trying to get back. Archived is NOT trashed and is not here.
+/// `offset_min` is the phone's clock against UTC, for made names.
 ///
 /// # Safety
 /// `path` a valid C string; `out` as above.
 #[no_mangle]
-pub unsafe extern "C" fn liv_view_trash(path: *const c_char, out: *mut *mut c_char) -> i32 {
+pub unsafe extern "C" fn liv_view_trash(
+    path: *const c_char,
+    offset_min: i32,
+    out: *mut *mut c_char,
+) -> i32 {
     match with_engine(path, |e| {
-        let rows = liv_surface::salvage::trash(e).map_err(|_| LIV_ERR_READ)?;
+        let rows = liv_surface::salvage::trash(e, offset_min).map_err(|_| LIV_ERR_READ)?;
         Ok(crate::surfaces::rows_json(&rows))
     }) {
         Ok(v) => deliver(out, &v),

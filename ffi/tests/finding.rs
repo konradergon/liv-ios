@@ -90,7 +90,7 @@ fn hits(v: &J) -> Vec<String> {
 fn search(path: &CString, q: &str, limit: u32) -> J {
     let mut out = std::ptr::null_mut();
     assert_eq!(
-        unsafe { liv_view_search(path.as_ptr(), c(q).as_ptr(), limit, std::ptr::null(), &mut out) },
+        unsafe { liv_view_search(path.as_ptr(), c(q).as_ptr(), limit, 0, std::ptr::null(), &mut out) },
         LIV_OK,
         "{q}"
     );
@@ -532,7 +532,7 @@ fn the_trash_has_its_own_verb_because_every_other_surface_hides_it() {
     let (d, path, _) = stocked("trash");
 
     let mut out = std::ptr::null_mut();
-    assert_eq!(unsafe { liv_view_trash(path.as_ptr(), &mut out) }, LIV_OK);
+    assert_eq!(unsafe { liv_view_trash(path.as_ptr(), 0, &mut out) }, LIV_OK);
     assert!(took(out).as_array().unwrap().is_empty(), "nothing thrown out yet");
 
     // Throw one out through the ordinary verb.
@@ -544,7 +544,7 @@ fn the_trash_has_its_own_verb_because_every_other_surface_hides_it() {
     );
 
     let mut out = std::ptr::null_mut();
-    unsafe { liv_view_trash(path.as_ptr(), &mut out) };
+    unsafe { liv_view_trash(path.as_ptr(), 0, &mut out) };
     let rows = took(out);
     assert_eq!(rows.as_array().unwrap().len(), 1, "{rows}");
     assert_eq!(rows[0]["id"].as_str().unwrap(), victim.to_str().unwrap());
@@ -592,7 +592,7 @@ fn open_lines_inside_notes_are_listed_without_becoming_things() {
     assert_eq!(
         unsafe {
             liv_ffi::surfaces::liv_view_tasks(
-                p.as_ptr(), std::ptr::null(), 20_726, std::ptr::null(), &mut out)
+                p.as_ptr(), std::ptr::null(), 20_726, 0, std::ptr::null(), &mut out)
         },
         LIV_OK
     );

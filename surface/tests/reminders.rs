@@ -113,7 +113,7 @@ fn rings_is_one_rule_for_every_row() {
     let t = timed(&mut e, kind::TASK, "Task", DAY, 14, 0);
     let ev = timed(&mut e, kind::EVENT, "Event", DAY, 14, 0);
     let n = timed(&mut e, kind::NOTE, "Note", DAY, 14, 0);
-    assert!(rings(&row(&e, t).unwrap()));
-    assert!(rings(&row(&e, ev).unwrap()));
-    assert!(!rings(&row(&e, n).unwrap()));
+    assert!(rings(&row(&e, t, 0).unwrap()));
+    assert!(rings(&row(&e, ev, 0).unwrap()));
+    assert!(!rings(&row(&e, n, 0).unwrap()));
 }

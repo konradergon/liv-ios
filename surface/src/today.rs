@@ -77,7 +77,7 @@ pub fn today(e: &Engine, now_ms: i64, offset_min: i32, lens: &Lens) -> Result<To
     // due three years ago is still late, and a horizon would be a rule
     // nobody stated.
     for (id, _) in e.in_window(prop::DUE, i64::MIN / 2, crate::day_start(today_day) - 1)? {
-        let r = dated(row(e, id)?, today_day);
+        let r = dated(row(e, id, offset_min)?, today_day);
         if visible(&r, lens) && is_late(&r, today_day) {
             out.late.push(r);
         }
@@ -88,7 +88,7 @@ pub fn today(e: &Engine, now_ms: i64, offset_min: i32, lens: &Lens) -> Result<To
     // ---- the strip -----------------------------------------------------
     for day in today_day..today_day + STRIP_DAYS {
         let mut d = TodayDay { day, ..TodayDay::default() };
-        for r in agenda(e, day, lens)? {
+        for r in agenda(e, day, lens, offset_min)? {
             let r = dated(r, today_day);
             if r.all_day {
                 d.all_day.push(r);
@@ -117,7 +117,7 @@ pub fn today(e: &Engine, now_ms: i64, offset_min: i32, lens: &Lens) -> Result<To
     }
     let mut next = Vec::new();
     for id in candidates {
-        let r = row(e, id)?;
+        let r = row(e, id, offset_min)?;
         if visible(&r, lens) && crate::can_tick(&r) && r.due_ms.is_none() && !r.done {
             next.push(r);
         }
@@ -137,7 +137,7 @@ pub fn today(e: &Engine, now_ms: i64, offset_min: i32, lens: &Lens) -> Result<To
         if day_of(id.millis() as i64 + offset_ms) != today_day {
             continue;
         }
-        let r = row(e, id)?;
+        let r = row(e, id, offset_min)?;
         if r.kind.is_none() && visible(&r, lens) {
             captured += 1;
         }

@@ -367,7 +367,7 @@ fn several_come_back_as_one_undo() {
     }
     let in_trash = || {
         let mut out = std::ptr::null_mut();
-        assert_eq!(unsafe { liv_ffi::finding::liv_view_trash(path.as_ptr(), &mut out) }, LIV_OK);
+        assert_eq!(unsafe { liv_ffi::finding::liv_view_trash(path.as_ptr(), 0, &mut out) }, LIV_OK);
         took(out).as_array().unwrap().len()
     };
     assert_eq!(in_trash(), 2);
@@ -1223,7 +1223,7 @@ fn a_minted_option_is_backstage_and_never_a_search_hit() {
     let mut out = std::ptr::null_mut();
     assert_eq!(
         unsafe {
-            liv_view_search(path.as_ptr(), c("woodworking").as_ptr(), 0, std::ptr::null(), &mut out)
+            liv_view_search(path.as_ptr(), c("woodworking").as_ptr(), 0, 0, std::ptr::null(), &mut out)
         },
         LIV_OK
     );
@@ -1460,7 +1460,7 @@ fn an_event_made_at_an_hour_is_timed_and_on_its_day() {
     // THE CALENDAR'S READING: a TIMED due at the minute the tap computed.
     let mut out = std::ptr::null_mut();
     assert_eq!(
-        unsafe { liv_view_day(path.as_ptr(), day, day, std::ptr::null(), &mut out) },
+        unsafe { liv_view_day(path.as_ptr(), day, day, 0, std::ptr::null(), &mut out) },
         LIV_OK
     );
     let days = took(out);
@@ -1478,7 +1478,7 @@ fn an_event_made_at_an_hour_is_timed_and_on_its_day() {
     // AND THE CALENDAR PUTS IT ON ITS DAY, AT AN HOUR.
     let mut out = std::ptr::null_mut();
     assert_eq!(
-        unsafe { liv_view_day(path.as_ptr(), day, day, std::ptr::null(), &mut out) },
+        unsafe { liv_view_day(path.as_ptr(), day, day, 0, std::ptr::null(), &mut out) },
         LIV_OK
     );
     let v = took(out);

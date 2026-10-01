@@ -54,16 +54,17 @@ pub fn tasks(
     project: Option<EntityId>,
     lens: &Lens,
     today_day: i32,
+    offset_min: i32,
 ) -> Result<Tasks, LogError> {
     // Every task the lens admits, by index seek.
     let mut all = Vec::new();
     for id in e.of_kind(kind::TASK)? {
-        let r = row(e, id)?;
+        let r = row(e, id, offset_min)?;
         if visible(&r, lens) {
             all.push(dated(r, today_day));
         }
     }
-    let in_notes = note_tasks(e, lens)?;
+    let in_notes = note_tasks(e, lens, offset_min)?;
     let open = all.iter().filter(|r| !r.done).count() + in_notes.len();
     let late = all.iter().filter(|r| r.late).count();
 

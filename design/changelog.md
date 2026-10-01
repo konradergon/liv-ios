@@ -1,5 +1,36 @@
 # Liv iOS — changelog (batch summaries; newest first)
 
+## 2026-10-01 — web links in notes; made names on the phone's clock
+
+**Web links.** A pasted address was plain text, and nothing in a note
+could open a web page. The scanner (`MarkScan.inline`) knows two more
+runs: a bare address — `https://`, `http://` or `www.` at the start of a
+word, up to the next space, less the punctuation a sentence puts after
+it (a `)` stays when the address opened one) — and a markdown link,
+`[text](url)`. Both are stored as the characters typed; the codec keeps
+them in the plain run. On screen they wear the accent, as a `[[link]]`
+does; a markdown link reads as its words off the caret's line, and shows
+its brackets and address on it, to be edited. A tap opens Safari — out of
+the app, the way a file opens elsewhere — through the same recogniser
+that follows `[[links]]`, so a long press still places the caret. Thirteen
+self-checks; seen on the simulator: both kinds of link opened Safari on
+example.com. An outline or display title shows a link's words.
+
+**Made names on the phone's clock** (owner's word, 1 Oct). A nameless
+thing's title — "Task · 1 Oct 04:07" — was UTC: two hours off in
+Stockholm. `row()` now takes the phone's offset and the made name is read
+on it, and every verb that hands rows back takes `offset_min`:
+`liv_view_tasks`, `liv_view_day`, `liv_view_search` and `liv_view_trash`
+changed in place, as Today, the library and reminders already had it
+(`ffi/liv.h`; still 49 functions). The CLI passes the Mac's offset; the
+app passes `livOffsetMinutes()`, now the one place it is worked out (it
+was three copies). Two tests, each seen failing with the offset ignored;
+on the simulator a task made at 22:09 read "Task · 1 Oct 22:09" in the
+app and through the CLI's list, tasks and search. Known limit: it is the
+offset NOW, so across a daylight-saving change a thing made before it
+reads an hour off — the zone's rules would mean a time-zone database in
+Rust.
+
 ## 2026-10-01 — search filters, the calendar bin, the card pill, the editor
 
 The owner's list before sync. Each was found on the simulator first.

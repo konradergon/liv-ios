@@ -51,7 +51,7 @@ pub fn library(e: &Engine, now_ms: i64, offset_min: i32, lens: &Lens) -> Result<
     let mut out = Library::default();
 
     for id in e.all_entities()? {
-        let r = dated(row(e, id)?, today_day);
+        let r = dated(row(e, id, offset_min)?, today_day);
         if visible(&r, &Lens::Everything) {
             out.all.push(r);
         }

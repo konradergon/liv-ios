@@ -367,6 +367,7 @@ pub fn search_screen(
     raw: &str,
     lens: &crate::Lens,
     limit: usize,
+    offset_min: i32,
 ) -> Result<Screen, LogError> {
     let s = parse(e, raw)?;
     let admitted = found(e, &s, lens)?;
@@ -374,7 +375,7 @@ pub fn search_screen(
     let cap = if limit == 0 { usize::MAX } else { limit };
     let mut hits = Vec::new();
     for h in admitted.iter().take(cap) {
-        hits.push(crate::row(e, h.id)?);
+        hits.push(crate::row(e, h.id, offset_min)?);
     }
 
     let words = s.terms.join(" ");

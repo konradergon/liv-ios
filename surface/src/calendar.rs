@@ -22,10 +22,16 @@ pub struct CalendarDay {
 
 /// Every day from `from` to `to`, both included, that has anything on it,
 /// in order. One index seek for the whole range, however many days.
-pub fn calendar(e: &Engine, from: i32, to: i32, lens: &Lens) -> Result<Vec<CalendarDay>, LogError> {
+pub fn calendar(
+    e: &Engine,
+    from: i32,
+    to: i32,
+    lens: &Lens,
+    offset_min: i32,
+) -> Result<Vec<CalendarDay>, LogError> {
     let mut rows = Vec::new();
     for (id, _) in e.in_window(prop::DUE, day_start(from), day_end(to))? {
-        let r = row(e, id)?;
+        let r = row(e, id, offset_min)?;
         if visible(&r, lens) {
             rows.push(r);
         }

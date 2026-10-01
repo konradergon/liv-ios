@@ -42,7 +42,7 @@ pub fn reminders(
     let mut due = Vec::new();
     // ONE INDEX SEEK over what is due after now — the past never rings.
     for (id, _) in e.in_window(prop::DUE, now + 1, i64::MAX / 2)? {
-        let r = row(e, id)?;
+        let r = row(e, id, offset_min)?;
         if visible(&r, &Lens::Everything) && rings(&r) {
             due.push(r);
         }

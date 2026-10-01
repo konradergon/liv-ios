@@ -464,6 +464,9 @@ enum SpanText {
             case .bold(let r): range = r; marks = 1
             case .italic(let r): range = r; marks = 2
             case .boldItalic(let r): range = r; marks = 3
+            // A web link is the characters typed: they stay in the plain
+            // run, to be found again on the next load.
+            case .url, .link: continue
             case .code(let r): range = r; marks = 4
             case .strike(let r): range = r; marks = 8
             case .refToken(let r, _):

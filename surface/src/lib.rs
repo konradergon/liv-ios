@@ -106,10 +106,10 @@ pub fn visible(r: &Row, lens: &Lens) -> bool {
 /// `in_window` is inclusive at both ends and `day_end` is the last
 /// millisecond, so a thing due at 23:59 is on the day and midnight
 /// tomorrow is not.
-pub fn agenda(e: &Engine, day: i32, lens: &Lens) -> Result<Vec<Row>, LogError> {
+pub fn agenda(e: &Engine, day: i32, lens: &Lens, offset_min: i32) -> Result<Vec<Row>, LogError> {
     let mut rows = Vec::new();
     for (id, _) in e.in_window(prop::DUE, day_start(day), day_end(day))? {
-        let r = row(e, id)?;
+        let r = row(e, id, offset_min)?;
         if visible(&r, lens) {
             rows.push(r);
         }
@@ -229,8 +229,9 @@ pub struct Row {
 }
 
 /// Everything a row needs, built from one `cells_of` rather than one query
-/// per property.
-pub fn row(e: &Engine, id: EntityId) -> Result<Row, LogError> {
+/// per property. `offset_min` is the phone's clock against UTC, which a
+/// nameless thing's made name is read on.
+pub fn row(e: &Engine, id: EntityId, offset_min: i32) -> Result<Row, LogError> {
     let cells = e.cells_of(id)?;
     let one = |want: EntityId| -> Option<&Value> {
         let mut it = cells.iter().filter(|(p, _, _)| *p == want);
@@ -263,7 +264,7 @@ pub fn row(e: &Engine, id: EntityId) -> Result<Row, LogError> {
     // hash-number) before this was one function.
     let (title, untitled) = match name.or(body_line) {
         Some(t) => (t, false),
-        None => (made_name(e, id)?, true),
+        None => (made_name(e, id, offset_min)?, true),
     };
 
     let due = one(prop::DUE).and_then(|v| match v {
@@ -351,7 +352,13 @@ fn word_for(e: &Engine, kind: EntityId) -> Result<Option<String>, LogError> {
 /// vocabulary lives — a shell carrying its own copy is the mistake
 /// `one-core.md` §4 records. `untitled` stays true, so a surface can
 /// still draw a made name more quietly than a given one.
-fn made_name(e: &Engine, id: EntityId) -> Result<String, LogError> {
+///
+/// **On the phone's clock** (owner, 2026-10-01: a task made at 06:07 in
+/// Stockholm read "Task · 1 Oct 04:07", UTC). The id knows the instant;
+/// the offset says what the phone's clock read. It is the offset NOW, so
+/// across a daylight-saving change a thing made before it reads an hour
+/// off — knowing the zone's rules would mean a time-zone database here.
+fn made_name(e: &Engine, id: EntityId, offset_min: i32) -> Result<String, LogError> {
     let kind = match e.kind_of(id)? {
         Some(k) => model::label(k).unwrap_or("Capture").to_string(),
         // An untyped capture. "Note" would be a claim about its kind that
@@ -362,7 +369,7 @@ fn made_name(e: &Engine, id: EntityId) -> Result<String, LogError> {
     if made <= 0 {
         return Ok(kind);
     }
-    Ok(format!("{kind} · {}", stamp_words(made)))
+    Ok(format!("{kind} · {}", stamp_words(made + offset_min as i64 * 60_000)))
 }
 
 /// `13 Sep 14:32` from a millisecond.
