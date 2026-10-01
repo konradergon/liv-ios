@@ -52,8 +52,8 @@ fn text_of<'a>(p: *const c_char) -> Result<&'a str, i32> {
 ///              "values":[{"label","count","active","excluded"}]}]}`
 ///
 /// **The limit bounds the hits, never the facets.** A facet count is over
-/// everything the query matches: a row saying "Work 12" when the list
-/// shows 10 is telling the truth about the box.
+/// everything the query matches inside the lens, words included: a row
+/// saying "Work 12" when the list shows 10 is telling the truth.
 ///
 /// **The lens is applied before counting and cutting**, so "Showing 200 of
 /// 1,800" is about the rows on screen. `lens` is a JSON array of hex ids,
@@ -104,8 +104,7 @@ fn facets_json(facets: &[search::Facet]) -> serde_json::Value {
                     "values": f.values.iter().map(|v| json!({
                         "label": v.label,
                         "count": v.count,
-                        // Include → exclude → off is a three-state cycle,
-                        // so the chip needs both flags rather than one.
+                        // Picked, or hidden: a chip needs both flags.
                         "active": v.active,
                         "excluded": v.excluded,
                     })).collect::<Vec<_>>(),

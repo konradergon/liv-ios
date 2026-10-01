@@ -108,7 +108,7 @@ struct LivApp: App {
         }
         // door: `simctl launch … -editor.selfcheck 1`.
         if UserDefaults.standard.bool(forKey: "editor.selfcheck") {
-            let failures = livEditorSelfCheck()
+            let failures = livEditorSelfCheck() + livStylerSelfCheck()
             print("ED-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
             failures.forEach { print("ED-SELFCHECK \($0)") }
         }

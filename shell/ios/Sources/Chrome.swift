@@ -477,11 +477,13 @@ final class DeskModel: ObservableObject {
     /// surface is frontmost, so tapping a task inside Tasks edits it
     /// WITHOUT leaving Tasks (owner, 2026-08-08).
     @Published var recordCard: LivEntityID?
-    /// A card swiped away lives on as a pill above the bottom bar. One
-    /// at a time, like a mail draft: go read a note, tap the pill, and
-    /// you are back where you were. Every record edit saves as you make
-    /// it, so the pill is pure navigation — nothing rides in it.
+    /// A card swiped away leaves a pill above the bottom bar, for
+    /// `LivMotion.offerSeconds`: tap it and the card is back. Every
+    /// record edit saves as you make it, so the pill is pure navigation —
+    /// nothing rides in it, and nothing is lost when it goes.
     @Published var minimisedRecord: LivEntityID?
+    /// Which pill the timer is for, so a later one is not cut short.
+    private var pillTicket = 0
 
     /// What kind of thing an id points at. Wired at launch from the box;
     /// nil before the first snapshot, which reads as "document" and is
@@ -492,11 +494,17 @@ final class DeskModel: ObservableObject {
     /// pruned before a box has answered.
     var knows: (LivEntityID) -> Bool = { _ in true }
 
-    /// Put the card away, remembering it.
+    /// Put the card away, remembering it for a moment.
     func minimiseRecord() {
         guard let id = recordCard else { return }
         recordCard = nil
         withAnimation(LivMotion.nav) { minimisedRecord = id }
+        pillTicket += 1
+        let ticket = pillTicket
+        DispatchQueue.main.asyncAfter(deadline: .now() + LivMotion.offerSeconds) { [weak self] in
+            guard let self, self.pillTicket == ticket, self.minimisedRecord == id else { return }
+            withAnimation(LivMotion.nav) { self.minimisedRecord = nil }
+        }
     }
 
     /// Bring the pill back to a card.

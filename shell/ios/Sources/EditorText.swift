@@ -35,6 +35,9 @@ extension NSAttributedString.Key {
     /// Syntax that is not on the caret's line: kept in the buffer, given
     /// NO glyphs at all, so the line reads as what it MEANS.
     static let livHidden = NSAttributedString.Key("liv.hidden")
+    /// On every line of a code block, its ``` lines included. Value:
+    /// NSNumber(true). The layout manager tints those lines full width.
+    static let livCode = NSAttributedString.Key("liv.code")
 }
 
 // MARK: - the bridge
@@ -89,8 +92,6 @@ private enum EditorFont {
     // never sees a SwiftUI font — different UNITS, not different
     // numbers.
     static let body = UIFont.systemFont(ofSize: LivType.Editor.body)
-    static let codeInline = UIFont.monospacedSystemFont(
-        ofSize: LivType.Editor.codeInline, weight: .regular)
 
     /// The list GUTTER: every list line's words start this far in, and a
     /// line that wraps carries on under its words rather than under its
@@ -105,11 +106,10 @@ private enum EditorFont {
     /// A heading's own paragraph: its pitch, and air under it. The air
     /// ABOVE is set per line (none on the note's first line).
     static func headingStyle(_ level: Int, first: Bool) -> NSParagraphStyle {
-        let pitch: CGFloat =
-            level == 1 ? LivType.Editor.h1Line
-            : level == 2 ? LivType.Editor.h2Line : LivType.Editor.h3Line
+        let font = heading(level)
+        let pitch = (font.pointSize * LivType.Editor.headingPitch).rounded()
         let p = NSMutableParagraphStyle()
-        p.lineSpacing = max(0, pitch - heading(level).lineHeight)
+        p.lineSpacing = max(0, pitch - font.lineHeight)
         p.paragraphSpacing = LivType.Editor.headingBelow
         p.paragraphSpacingBefore = first ? 0 : LivType.Editor.headingAbove
         return p
@@ -139,12 +139,20 @@ private enum EditorFont {
         return body.ascender - ink.midY
     }()
 
+    /// `#` is the largest and `######` the smallest; the scanner never
+    /// calls a seventh `#` a heading.
     static func heading(_ level: Int) -> UIFont {
-        switch level {
-        case 1: return .systemFont(ofSize: LivType.Editor.h1, weight: .bold)
-        case 2: return .systemFont(ofSize: LivType.Editor.h2, weight: .semibold)
-        default: return .systemFont(ofSize: LivType.Editor.h3, weight: .semibold)
-        }
+        let sizes = LivType.Editor.headings
+        let size = sizes[max(1, min(sizes.count, level)) - 1]
+        return .systemFont(ofSize: size, weight: level == 1 ? .bold : .semibold)
+    }
+
+    /// Code in a line keeps its ratio to that line's size, so `code` in
+    /// a heading is not body-sized.
+    static func code(in line: UIFont) -> UIFont {
+        .monospacedSystemFont(
+            ofSize: line.pointSize * LivType.Editor.codeInline / LivType.Editor.body,
+            weight: .regular)
     }
 
     /// One step heavier than the base — **bold** inside an H1 (already
@@ -184,10 +192,12 @@ enum MarkStyler {
     /// it appear as ---" (owner, 2026-08-07). Line-local by design, so
     /// the typing path never rescans the document.
     static func apply(
-        to storage: NSTextStorage, in charRange: NSRange, revealing: NSRange? = nil
+        to storage: NSTextStorage, in charRange: NSRange, revealing: NSRange? = nil,
+        fences known: Fences? = nil
     ) {
         let n = storage.string as NSString
         guard n.length > 0 else { return }
+        let fences = known ?? MarkScan.fences(in: n)
         let safe = NSRange(
             location: min(charRange.location, n.length),
             length: min(charRange.length, n.length - min(charRange.location, n.length)))
@@ -214,12 +224,36 @@ enum MarkStyler {
         storage.setAttributes(baseAttributes, range: range)
 
         n.enumerateSubstrings(in: range, options: [.byLines, .substringNotRequired]) {
-            _, lineRange, _, _ in
-            style(
-                line: n.substring(with: lineRange), at: lineRange.location,
-                storage: storage,
-                revealed: MarkStyler.reveals(revealing, line: lineRange))
+            _, lineRange, wholeLine, _ in
+            if fences.isBlock(lineAt: lineRange.location) {
+                code(
+                    lineRange, wholeLine, fence: fences.isMarker(lineAt: lineRange.location),
+                    storage: storage)
+            } else {
+                style(
+                    line: n.substring(with: lineRange), at: lineRange.location,
+                    storage: storage,
+                    revealed: MarkStyler.reveals(revealing, line: lineRange))
+            }
         }
+    }
+
+    /// A line of a code block: monospace, read as nothing but itself. Its
+    /// ``` lines stay on screen, dimmed — they are the only way to see
+    /// where the block ends.
+    private static func code(
+        _ line: NSRange, _ wholeLine: NSRange, fence: Bool, storage: NSTextStorage
+    ) {
+        // The tint is on the newline too, so an empty line in a block
+        // still belongs to it.
+        storage.addAttribute(.livCode, value: NSNumber(value: true), range: wholeLine)
+        guard line.length > 0 else { return }
+        storage.addAttributes(
+            [
+                .font: EditorFont.code(in: EditorFont.body),
+                .foregroundColor: fence ? LivInk.text3 : LivInk.text,
+            ],
+            range: line)
     }
 
     /// Is this line the caret's? A line is revealed when the revealed
@@ -397,8 +431,21 @@ enum MarkStyler {
         /// Only the refToken case reaches this directly. Everything else
         /// comes through `mark` and still reveals, because everything
         /// else is syntax a person types.
+        ///
+        /// A LINE'S FIRST GLYPH MUST BE REAL. A paragraph that opens on
+        /// null glyphs loses its air above, and TextKit lays the newline
+        /// before it into its line — so a heading whose `#` was hidden sat
+        /// 18pt higher than with the caret on it, jumped every time the
+        /// caret came or went, and took the tint of a code block above it
+        /// (2026-10-01; `livStylerSelfCheck` holds both). At the start of a
+        /// line, syntax is collapsed instead: clear ink, its width kerned
+        /// away.
         func hide(_ r: NSRange, font: UIFont = EditorFont.body) {
             guard r.length > 0 else { return }
+            if r.location == 0 {
+                collapse(r, font: font)
+                return
+            }
             storage.addAttributes(
                 [.font: font, .livHidden: NSNumber(value: true)], range: abs(r))
         }
@@ -538,10 +585,12 @@ enum MarkStyler {
             break
         }
 
+        // EVERYTHING INLINE WEARS THE LINE'S SIZE — the `**` around a word,
+        // `code` and a link's name. In a heading they were body-size.
         for run in MarkScan.inline(line, from: shape.marker.length) {
             switch run {
             case .marker(let r):
-                mark(r)
+                mark(r, font: contentFont)
             case .bold(let r):
                 if r.length > 0 {
                     storage.addAttribute(
@@ -551,6 +600,12 @@ enum MarkStyler {
                 if r.length > 0 {
                     storage.addAttribute(
                         .font, value: EditorFont.italicized(contentFont), range: abs(r))
+                }
+            case .boldItalic(let r):
+                if r.length > 0 {
+                    storage.addAttribute(
+                        .font, value: EditorFont.italicized(EditorFont.bolded(contentFont)),
+                        range: abs(r))
                 }
             case .strike(let r):
                 if r.length > 0 {
@@ -564,7 +619,7 @@ enum MarkStyler {
                 if r.length > 0 {
                     storage.addAttributes(
                         [
-                            .font: EditorFont.codeInline,
+                            .font: EditorFont.code(in: contentFont),
                             .foregroundColor: LivInk.text2,
                             .backgroundColor: LivInk.panel2,
                         ], range: abs(r))
@@ -593,13 +648,16 @@ enum MarkStyler {
                 // both branches went through `mark`, so the plumbing came
                 // back the moment the caret landed on the line.
                 if let name, name.length > 0 {
-                    hide(NSRange(location: whole.location, length: name.location - whole.location))
+                    hide(
+                        NSRange(location: whole.location, length: name.location - whole.location),
+                        font: contentFont)
                     hide(
                         NSRange(
                             location: NSMaxRange(name),
-                            length: NSMaxRange(whole) - NSMaxRange(name)))
+                            length: NSMaxRange(whole) - NSMaxRange(name)),
+                        font: contentFont)
                 } else {
-                    dim(whole)
+                    dim(whole, font: contentFont)
                 }
                 if let id = refId(line, whole) {
                     storage.addAttribute(
@@ -610,12 +668,98 @@ enum MarkStyler {
                 }
                 if let name, name.length > 0 {
                     storage.addAttributes(
-                        [.font: EditorFont.body, .foregroundColor: LivInk.accent],
+                        [.font: contentFont, .foregroundColor: LivInk.accent],
                         range: abs(name))
                 }
             }
         }
     }
+}
+
+// MARK: - self-check: the styler over a real TextKit stack
+
+/// What the styler leaves on the text, checked over the same stack the
+/// editor builds — the half of the editor `livEditorSelfCheck` cannot
+/// reach, because it lives on TextKit.
+func livStylerSelfCheck() -> [String] {
+    var failures: [String] = []
+    func check(_ label: String, _ ok: Bool, _ detail: @autoclosure () -> String = "") {
+        if !ok { failures.append("FAIL \(label) \(detail())") }
+    }
+    let text = "a\n> quote\n```swift\n# no\n```\n# After **b** and `c`" as NSString
+    let storage = NSTextStorage(string: text as String)
+    let layout = LivLayoutManager()
+    layout.delegate = layout
+    let container = NSTextContainer(size: CGSize(width: 360, height: 10_000))
+    storage.addLayoutManager(layout)
+    layout.addTextContainer(container)
+    let after = text.range(of: "# After")
+    let caretAtEnd = text.paragraphRange(for: NSRange(location: text.length, length: 0))
+
+    // As the editor does it: the whole note with the caret on the last
+    // line, LAID OUT, then that line again once the caret has left it —
+    // glyphs and layout invalidated the way `apply`'s async hop does.
+    MarkStyler.apply(to: storage, in: NSRange(location: 0, length: text.length), revealing: caretAtEnd)
+    layout.ensureLayout(for: container)
+    /// Where the heading's first letter sits, baseline included.
+    func letter() -> CGPoint {
+        let g = layout.glyphIndexForCharacter(at: text.range(of: "After").location)
+        let line = layout.lineFragmentRect(forGlyphAt: g, effectiveRange: nil)
+        return CGPoint(x: 0, y: line.minY + layout.location(forGlyphAt: g).y)
+    }
+    let shown = letter()
+    MarkStyler.apply(to: storage, in: caretAtEnd, revealing: nil)
+    layout.invalidateGlyphs(forCharacterRange: caretAtEnd, changeInLength: 0, actualCharacterRange: nil)
+    layout.invalidateLayout(forCharacterRange: caretAtEnd, actualCharacterRange: nil)
+    layout.ensureLayout(for: container)
+
+    func code(_ at: Int) -> Bool { storage.attribute(.livCode, at: at, effectiveRange: nil) != nil }
+    check("a line in a block is code", code(text.range(of: "# no").location))
+    check("the closing fence is code", code(text.range(of: "```\n# After").location))
+    check("the line after a block is not code", !(after.location..<text.length).contains(where: code))
+    check("the line before a block is not code", !code(text.range(of: "> quote").location))
+
+    // What the layout manager tints: every line of every `.livCode` run.
+    let heading = layout.glyphRange(forCharacterRange: after, actualCharacterRange: nil)
+    let headingLine = layout.lineFragmentRect(forGlyphAt: heading.location, effectiveRange: nil)
+    var tinted: [String] = []
+    storage.enumerateAttribute(.livCode, in: NSRange(location: 0, length: text.length)) { value, range, _ in
+        guard value != nil else { return }
+        let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        layout.enumerateLineFragments(forGlyphRange: glyphs) { rect, _, _, g, _ in
+            if rect.intersects(headingLine.insetBy(dx: 0, dy: 1)) {
+                tinted.append("run \(range) line \(rect) glyphs \(g)")
+            }
+        }
+    }
+    check("no tint on the heading after a block", tinted.isEmpty, "\(tinted) heading \(headingLine)")
+    // NOTHING MOVES WHEN THE CARET LEAVES: the heading's line keeps its
+    // place and its air whether its `#` shows or not.
+    check(
+        "a heading does not jump when its marker hides", abs(letter().y - shown.y) < 0.5,
+        "baseline shown \(shown.y) hidden \(letter().y)")
+
+    // STACKED HEADINGS, styled once with no caret: each keeps its air
+    // above, as it has with the caret on it.
+    let stack = "# One\n## Two\n### Three" as NSString
+    func baseline(of word: String, revealing: NSRange?) -> CGFloat {
+        let st = NSTextStorage(string: stack as String)
+        let lm = LivLayoutManager()
+        lm.delegate = lm
+        let tc = NSTextContainer(size: CGSize(width: 360, height: 10_000))
+        st.addLayoutManager(lm)
+        lm.addTextContainer(tc)
+        MarkStyler.apply(to: st, in: NSRange(location: 0, length: stack.length), revealing: revealing)
+        lm.ensureLayout(for: tc)
+        let g = lm.glyphIndexForCharacter(at: stack.range(of: word).location)
+        return lm.lineFragmentRect(forGlyphAt: g, effectiveRange: nil).minY + lm.location(forGlyphAt: g).y
+    }
+    let two = stack.paragraphRange(for: stack.range(of: "Two"))
+    check(
+        "a stacked heading sits where it does with the caret on it",
+        abs(baseline(of: "Two", revealing: nil) - baseline(of: "Two", revealing: two)) < 0.5,
+        "hidden \(baseline(of: "Two", revealing: nil)) shown \(baseline(of: "Two", revealing: two))")
+    return failures
 }
 
 // MARK: - the layout manager: draws the task checkboxes
@@ -658,6 +802,29 @@ final class LivLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                 forGlyphRange: glyphRange)
         }
         return glyphRange.length
+    }
+
+    /// A CODE BLOCK is tinted the width of the page, line by line, so it
+    /// reads as one piece however its lines wrap.
+    override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
+        super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+        guard let storage = textStorage, let container = textContainers.first else { return }
+        let chars = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+        LivInk.panel2.setFill()
+        storage.enumerateAttribute(.livCode, in: chars) { value, range, _ in
+            guard (value as? NSNumber)?.boolValue == true else { return }
+            let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            enumerateLineFragments(forGlyphRange: glyphs) { line, _, _, _, _ in
+                let pad = LivType.Editor.codePad
+                UIBezierPath(
+                    rect: CGRect(
+                        x: origin.x + container.lineFragmentPadding - pad,
+                        y: origin.y + line.minY,
+                        width: container.size.width - container.lineFragmentPadding * 2 + pad * 2,
+                        height: line.height)
+                ).fill()
+            }
+        }
     }
 
     override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
@@ -1045,6 +1212,53 @@ final class MarkdownTextView: UITextView {
         if window != nil { watchKeyboard() }
     }
 
+    /// THE CARET IS AS TALL AS THE TEXT IT STANDS IN (owner, 2026-10-01:
+    /// "the cursor doesn't match the # heading being edited"). UIKit
+    /// sizes it from the line's box, and the box carries the line's pitch
+    /// and, under a heading, its air — so the caret hung about 10pt below
+    /// the letters. It is drawn from the font at the caret instead: up
+    /// from the line's baseline by the ascender, down by the descender.
+    override func caretRect(for position: UITextPosition) -> CGRect {
+        let rect = super.caretRect(for: position)
+        guard !rect.isNull, !rect.isInfinite,
+            let at = caretLine(at: offset(from: beginningOfDocument, to: position))
+        else { return rect }
+        return CGRect(
+            x: rect.minX, y: at.baseline - at.font.ascender,
+            width: rect.width, height: at.font.ascender - at.font.descender)
+    }
+
+    /// The font the caret stands in — the character it follows on its
+    /// line, else the one it precedes, else what typing would write — and
+    /// its line's baseline, in this view's coordinates.
+    private func caretLine(at index: Int) -> (font: UIFont, baseline: CGFloat)? {
+        let storage = textStorage
+        let s = storage.string as NSString
+        let n = s.length
+        let i = max(0, min(index, n))
+        var font = typingAttributes[.font] as? UIFont ?? EditorFont.body
+        if i > 0, s.character(at: i - 1) != 0x0A,
+            let f = storage.attribute(.font, at: i - 1, effectiveRange: nil) as? UIFont
+        {
+            font = f
+        } else if i < n, s.character(at: i) != 0x0A,
+            let f = storage.attribute(.font, at: i, effectiveRange: nil) as? UIFont
+        {
+            font = f
+        }
+        // An empty last line has no glyph; TextKit lays it out as the
+        // extra fragment.
+        if n == 0 || (i == n && s.character(at: n - 1) == 0x0A) {
+            let extra = layoutManager.extraLineFragmentRect
+            guard extra.height > 0 else { return nil }
+            return (font, extra.minY + textContainerInset.top + font.ascender)
+        }
+        let glyph = layoutManager.glyphIndexForCharacter(at: min(i, n - 1))
+        let line = layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let baseline = line.minY + layoutManager.location(forGlyphAt: glyph).y
+        return (font, baseline + textContainerInset.top)
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         guard showsTitle else { return }
@@ -1350,15 +1564,30 @@ struct MarkdownEditor: UIViewRepresentable {
             }
         }
 
+        /// How many ``` lines the note had at the last restyle.
+        private var fenceCount = 0
+
         /// Widened one character each side: a return that SPLITS a line
         /// edits only the newline, but both halves need restyling.
+        ///
+        /// A ``` LINE CHANGES EVERY LINE BELOW IT, so an edit that makes,
+        /// removes or touches one restyles to the end of the note.
         private func apply(around range: NSRange, to storage: NSTextStorage) {
-            let n = (storage.string as NSString).length
+            let s = storage.string as NSString
+            let n = s.length
             let lo = max(0, min(range.location, n) - 1)
-            let hi = min(n, NSMaxRange(range) + 1)
+            var hi = min(n, NSMaxRange(range) + 1)
+            let fences = MarkScan.fences(in: s)
+            let edited = s.paragraphRange(for: NSRange(location: lo, length: hi - lo))
+            if fences.markers.count != fenceCount
+                || s.range(of: "```", options: .literal, range: edited).location != NSNotFound
+            {
+                hi = n
+            }
+            fenceCount = fences.markers.count
             MarkStyler.apply(
                 to: storage, in: NSRange(location: lo, length: hi - lo),
-                revealing: revealedRule)
+                revealing: revealedRule, fences: fences)
         }
 
         func textViewDidChange(_ textView: UITextView) {

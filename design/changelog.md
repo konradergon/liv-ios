@@ -1,5 +1,70 @@
 # Liv iOS — changelog (batch summaries; newest first)
 
+## 2026-10-01 — search filters, the calendar bin, the card pill, the editor
+
+The owner's list before sync. Each was found on the simulator first.
+
+**Search filters.** The counts ignored the words and the workspace: a
+search for "note" offered "Task 6" — every task in the box — and tapping it
+found nothing. `surface/src/search.rs` now counts over what the search
+found, inside the workspace, with each property's own pick lifted so a
+picked row still offers its siblings. A picked value keeps its chip even
+at zero, so the row is always the way back; that is what let the second
+line repeating every pick (the "blip", owner) go. A row whose tap could
+not change the list is not offered ("Note 41" over 41 notes), and only
+properties a person picks get a row, never plumbing. Five new tests. In
+Swift the rows are bigger — body-size words in 40pt chips, hollow until
+picked, then the plate a chosen segment wears (`LivFacets`). A tap on a lit
+chip puts it back; holding one opens Only / Hide / Any. The hold's lift
+also fired a tap, which un-picked the chip the menu was about; it is
+swallowed now. `drive.sh facets` was rewritten for the new shape and seen
+failing against the hold bug.
+
+**The calendar bin stayed after a move.** Two causes. It showed while a
+landed block waited for the box, not only while a finger held one. And the
+wait never ended: `settle()` read `box.calendar` inside
+`onReceive(box.$calendar)`, which fires BEFORE the property is set, so it
+always saw the old time. It reads the answer handed in now. Proven by
+putting the old bin condition back: the bin still cleared.
+
+**The pill a swiped-away task or event card leaves** stayed until closed,
+over the foot of every list. It goes after `LivMotion.offerSeconds` (5 s),
+the window the Undo chip already had — one constant for both, and Unsorted's.
+
+**The editor.**
+- Six heading sizes, `#` to `######`: 28, 26, 24, 22, 20, 18; seven `#` is
+  text. There were three, and H3 to H6 were all body-size.
+- The caret is drawn from the font at the caret (`caretRect`). UIKit sized
+  it from the line's box, which carries the pitch and a heading's air, so
+  it hung about 10pt below the letters.
+- `**`, `code` and a link's name in a heading take the heading's size.
+- Code blocks. The codec knew ``` blocks; the styler did not, so a `#`
+  inside one was drawn as a heading and a `- [ ]` as a live checkbox while
+  the note stored them as code. `MarkScan.fences` is now the one rule for
+  the codec, the styler, the outline and Return; a block is monospace on a
+  tint, nothing in it read as markdown, and a ``` line restyles the rest of
+  the note.
+- Headings jumped 18pt every time the caret came or went. Syntax off the
+  caret's line was hidden as null glyphs, and a paragraph that opens on
+  null glyphs loses its air above and gets the newline before it laid into
+  its line (which is also how a code block's tint spread onto the heading
+  under it). Syntax at the start of a line is now collapsed — clear ink,
+  width kerned away — the trick list lines already used.
+- `***both***` reads as bold italic, so the toolbar's B then I round-trips
+  instead of raising the "formatting the phone can't keep" banner.
+- `livStylerSelfCheck` runs the styler over a real TextKit stack (run by
+  `suites.sh editor`); its checks were each seen failing on the old code.
+
+`cargo test` 388; `suites.sh` 13/13; every `drive.sh` check passes
+(`workspace` and `library` timed out once while `cargo test` ran beside
+them, and pass alone).
+
+**Found, not fixed:** a nameless thing's title ("Task · 1 Oct 04:07") is
+in UTC, two hours off here — the made name needs the phone's offset, which
+four row-returning verbs do not take (a door change, the owner's call). In
+notes, URLs are not links, `_x_` and `__x__` stay literal, and quotes and
+callouts are only grey text.
+
 ## 2026-10-01 — what rings is Rust's
 
 The last product rule decided in Swift. `Notify.swift` walked every row in

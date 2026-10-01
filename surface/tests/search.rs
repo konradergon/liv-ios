@@ -6,7 +6,7 @@
 
 use liv_engine::*;
 use liv_surface::search::{
-    facet, facet_properties, parse, parse_mode, search, search_screen, Field, Mode,
+    parse, parse_mode, search, search_screen, Field, Mode,
 };
 use liv_surface::Lens;
 
@@ -263,18 +263,65 @@ fn board(e: &mut Engine) -> (EntityId, EntityId, EntityId) {
     (a, b, c)
 }
 
+/// One chip row as the screen gets it: (value, count, picked), in order.
+fn chips(e: &Engine, raw: &str, lens: &Lens, property: &str) -> Vec<(String, usize, bool)> {
+    search_screen(e, raw, lens, 0)
+        .unwrap()
+        .facets
+        .iter()
+        .find(|f| f.label == property)
+        .map(|f| {
+            f.values.iter().map(|v| (v.label.clone(), v.count, v.active || v.excluded)).collect()
+        })
+        .unwrap_or_default()
+}
+
+fn rows(e: &Engine, raw: &str) -> Vec<String> {
+    search_screen(e, raw, &Lens::Everything, 0)
+        .unwrap()
+        .facets
+        .iter()
+        .map(|f| f.label.clone())
+        .collect()
+}
+
 #[test]
 fn a_facet_counts_what_each_value_would_yield() {
     let mut e = engine();
     board(&mut e);
-    let s = parse(&e, "").unwrap();
-    let f = facet(&e, &s, prop::AREA).unwrap();
+    assert_eq!(
+        chips(&e, "", &Lens::Everything, "area"),
+        vec![("Work".into(), 2, false), ("Home".into(), 1, false)],
+        "count-descending"
+    );
+}
 
-    assert_eq!(f.label, "area");
-    let counts: Vec<(String, usize)> =
-        f.values.iter().map(|v| (v.label.clone(), v.count)).collect();
-    assert_eq!(counts, vec![("Work".into(), 2), ("Home".into(), 1)], "count-descending");
-    assert!(f.values.iter().all(|v| !v.active && !v.excluded));
+/// **The count is over what the WORDS found.** Until 2026-10-01 it was
+/// over the whole box: a search for "roof" offered "Task 2" and "Event 1"
+/// when one task matched, and tapping Event found nothing.
+#[test]
+fn a_facet_counts_only_what_the_words_found() {
+    let mut e = engine();
+    board(&mut e);
+    e.create(kind::NOTE, Some("roof plan"), T0 + 6).unwrap();
+    e.create(kind::EVENT, Some("dentist"), T0 + 7).unwrap();
+    assert_eq!(
+        chips(&e, "roof", &Lens::Everything, "kind"),
+        vec![("Note".into(), 1, false), ("Task".into(), 1, false)]
+    );
+    assert_eq!(chips(&e, "roof", &Lens::Everything, "area"), vec![("Work".into(), 1, false)]);
+}
+
+/// And inside the workspace, like the hits beside it.
+#[test]
+fn a_facet_counts_only_what_the_workspace_admits() {
+    let mut e = engine();
+    let (a, _, c) = board(&mut e);
+    let lens: Lens = [a, c].into_iter().collect();
+    assert_eq!(
+        chips(&e, "", &lens, "area"),
+        vec![("Home".into(), 1, false), ("Work".into(), 1, false)]
+    );
 }
 
 /// **The count excludes this property's own constraints**, so a facet you
@@ -287,13 +334,8 @@ fn a_chosen_facet_still_shows_its_siblings() {
     board(&mut e);
     // `Work`, not `work`: a minted area resolves through its `name` cell,
     // which matches exactly.
-    let s = parse(&e, "area:Work").unwrap();
-    let f = facet(&e, &s, prop::AREA).unwrap();
-
-    let counts: Vec<(String, usize, bool)> =
-        f.values.iter().map(|v| (v.label.clone(), v.count, v.active)).collect();
     assert_eq!(
-        counts,
+        chips(&e, "area:Work", &Lens::Everything, "area"),
         vec![("Work".into(), 2, true), ("Home".into(), 1, false)],
         "Home is still offered, and still counts 1"
     );
@@ -303,9 +345,9 @@ fn a_chosen_facet_still_shows_its_siblings() {
 fn an_excluded_value_says_so() {
     let mut e = engine();
     board(&mut e);
-    let s = parse(&e, "-area:Work").unwrap();
-    let f = facet(&e, &s, prop::AREA).unwrap();
-    let work = f.values.iter().find(|v| v.label == "Work").expect("still offered");
+    let screen = search_screen(&e, "-area:Work", &Lens::Everything, 0).unwrap();
+    let area = screen.facets.iter().find(|f| f.label == "area").unwrap();
+    let work = area.values.iter().find(|v| v.label == "Work").expect("still offered");
     assert!(work.excluded && !work.active);
 }
 
@@ -316,20 +358,72 @@ fn a_value_nothing_would_yield_is_not_a_choice() {
     // Narrow to something no Home task satisfies.
     e.set(a, prop::STATUS, Value::Ref(status::DONE), T0 + 10).unwrap();
     e.set(b, prop::STATUS, Value::Ref(status::DONE), T0 + 11).unwrap();
+    let loose = e.create(kind::TASK, Some("filed nowhere"), T0 + 12).unwrap();
+    e.set(loose, prop::STATUS, Value::Ref(status::DONE), T0 + 13).unwrap();
+    assert_eq!(
+        chips(&e, "status:done", &Lens::Everything, "area"),
+        vec![("Work".into(), 2, false)]
+    );
+}
 
-    let s = parse(&e, "status:done").unwrap();
-    let f = facet(&e, &s, prop::AREA).unwrap();
-    assert_eq!(f.values.iter().map(|v| v.label.clone()).collect::<Vec<_>>(), vec!["Work"]);
+/// **A pick keeps its chip when nothing is left**, so the screen can
+/// always be undone from the row it was made in. Without this the screen
+/// needed a second line repeating every pick (the "blip" the owner named
+/// on 2026-10-01), because a search that found nothing sent no chips to
+/// un-tap.
+#[test]
+fn a_pick_keeps_its_chip_when_nothing_is_left() {
+    let mut e = engine();
+    let (a, _, _) = board(&mut e);
+    e.set(a, prop::STATUS, Value::Ref(status::DONE), T0 + 10).unwrap();
+    e.create(kind::NOTE, Some("roof plan"), T0 + 11).unwrap();
+
+    let raw = "roof kind:note status:done";
+    assert_eq!(search_screen(&e, raw, &Lens::Everything, 0).unwrap().total, 0);
+    assert_eq!(
+        chips(&e, raw, &Lens::Everything, "kind"),
+        vec![("Task".into(), 1, false), ("Note".into(), 0, true)]
+    );
+    assert_eq!(chips(&e, raw, &Lens::Everything, "status"), vec![("Done".into(), 0, true)]);
+    // An exclusion too.
+    assert_eq!(
+        chips(&e, "laundry -area:Work", &Lens::Everything, "area"),
+        vec![("Home".into(), 1, false), ("Work".into(), 0, true)]
+    );
 }
 
 #[test]
 fn only_properties_the_result_actually_carries_get_a_chip_row() {
     let mut e = engine();
     board(&mut e);
-    let props = facet_properties(&e, &parse(&e, "").unwrap()).unwrap();
-    assert!(props.contains(&prop::KIND), "everything has a kind");
-    assert!(props.contains(&prop::AREA));
-    assert!(!props.contains(&prop::PROJECT), "nothing is in a project, so do not offer one");
+    e.create(kind::NOTE, Some("plan"), T0 + 6).unwrap();
+    let shown = rows(&e, "");
+    assert!(shown.contains(&"kind".to_owned()), "everything has a kind");
+    assert!(shown.contains(&"area".to_owned()));
+    assert!(!shown.contains(&"project".to_owned()), "nothing is in a project, so do not offer one");
+}
+
+/// **A row that cannot narrow is noise.** When every hit is a note,
+/// "Note 41" changes nothing if tapped — but once something in a row is
+/// picked, the row stays, so the pick can be undone.
+#[test]
+fn a_row_that_cannot_narrow_is_not_offered() {
+    let mut e = engine();
+    e.create(kind::NOTE, Some("roof plan"), T0).unwrap();
+    e.create(kind::NOTE, Some("roof photos"), T0 + 1).unwrap();
+    assert!(!rows(&e, "roof").contains(&"kind".to_owned()));
+    assert!(rows(&e, "roof kind:note").contains(&"kind".to_owned()));
+    assert!(rows(&e, "roof -kind:task").contains(&"kind".to_owned()));
+}
+
+/// A chip row is for something a person picks — never the plumbing a
+/// thing happens to carry.
+#[test]
+fn plumbing_never_gets_a_chip_row() {
+    let mut e = engine();
+    let (a, _, _) = board(&mut e);
+    e.add(a, prop::HIDE_ON_KIND, Value::Ref(kind::NOTE), T0 + 10).unwrap();
+    assert!(!rows(&e, "roof").contains(&"hide-on-kind".to_owned()));
 }
 
 // ---- moved from services/tests/search.rs (2026-09-29) --------------------

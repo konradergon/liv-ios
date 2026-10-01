@@ -48,12 +48,15 @@ struct SearchView: View {
     /// standing rule 5 forbids (owner: "clunky things like 'type:foo'
     /// appearing in search bar").
     @State private var words = ""
-    /// WHAT THE PICKERS CHOSE, in tap order. Drawn as chips under the
-    /// field, where you can see and undo them.
+    /// WHAT THE PICKERS CHOSE, in tap order. Lit in their facet rows.
     @State private var terms: [SearchTerm] = []
     /// The facet menu. Search is a `fullScreenCover`, and the desk's menu
     /// host lives under it at the root — so this surface hosts its own.
     @State private var menu: LivMenu?
+    /// The chip a hold just opened the menu for. The hold is simultaneous,
+    /// so the tap still fires when the finger lifts — and on a picked chip
+    /// that tap undid the pick the menu was opened about (2026-10-01).
+    @State private var held: String?
     /// The hits Rust ranked, inside the workspace lens, first 200.
     @State private var hits: [EntityRow] = []
     /// How many the lens admits in all. Rust sends the first 200; without
@@ -252,6 +255,10 @@ struct SearchView: View {
         }
         .onChange(of: words) { _, _ in kick(debounce: true) }
         .onChange(of: workspaces.lensIds) { _, _ in kick(debounce: false) }
+        // Where the lift fired no tap, the hold is forgotten with its menu.
+        .onChange(of: menu == nil) { _, closed in
+            if closed { held = nil }
+        }
         .livMenu($menu)
     }
 
@@ -321,10 +328,10 @@ struct SearchView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 6)
             }
-            // WHAT YOU CHOSE, always on screen — the way back when a
-            // constraint has narrowed the list to nothing and the core
-            // sends no facets to un-tap.
-            constraintLine
+            // WHAT YOU CHOSE is lit in its own row, and Rust keeps a
+            // picked chip even when nothing is left to count — so the row
+            // is also the way back (2026-10-01; a second line repeating
+            // every pick above the rows went).
             if !facets.isEmpty {
                 facetRow
             }
@@ -368,137 +375,92 @@ struct SearchView: View {
     /// struck through when it excludes it, and the CORE decides which — so a
     /// query typed by hand lights the same chips as one built by tapping.
     private var facetRow: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 0) {
             ForEach(facets) { facet in
-                HStack(alignment: .center, spacing: 10) {
-                    // THE PROPERTY'S NAME, ON SCREEN. It was 12pt
-                    // uppercase kerned `text3` — the label style the
-                    // polish pass removed everywhere else, under the 14
-                    // floor — and every property but the first sat off
-                    // the right edge of one long scroller. So the screen
-                    // never said what you could narrow by (owner,
+                HStack(alignment: .center, spacing: LivFacets.gap) {
+                    // THE PROPERTY'S NAME, ON SCREEN, at the margin — so
+                    // the screen says what you can narrow by (owner,
                     // 2026-09-06: "it isn't obvious how").
-                    //
-                    // One row per property, the name first at the margin
-                    // in the app's own heading recipe, values scrolling
-                    // sideways within their row.
                     Text(facet.label.capitalized)
-                        .font(.system(size: LivType.label, weight: .medium))
+                        .font(.system(size: LivType.body, weight: .medium))
                         .foregroundStyle(LivTheme.text2)
-                        .frame(width: 74, alignment: .leading)
+                        .frame(width: LivFacets.name, alignment: .leading)
                         .lineLimit(1)
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            ForEach(facet.values) { value in
-                                chip(facet.label, value)
+                    ScrollViewReader { proxy in
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: LivFacets.gap) {
+                                ForEach(facet.values) { value in
+                                    chip(facet.label, value)
+                                }
                             }
+                            .padding(.trailing, 16)
                         }
-                        .padding(.trailing, 16)
+                        // A PICK STAYS IN SIGHT. Picking in another row
+                        // re-counts this one, and a lit chip can be
+                        // re-ordered off the edge; with no second line
+                        // repeating the picks, the row brings it back —
+                        // by the least it can, so a chip already in view
+                        // never moves.
+                        .onAppear { reveal(facet, proxy) }
+                        .onChange(of: facet.values.map { "\($0.id)\($0.active)\($0.excluded)" }) {
+                            _, _ in reveal(facet, proxy)
+                        }
                     }
                 }
-                .frame(height: 38)
+                .frame(height: LivFacets.row)
             }
         }
         .padding(.leading, 16)
-        .padding(.bottom, 4)
+        .padding(.bottom, 2)
     }
 
-    /// WHAT YOU CHOSE, under the field, where you can see it and undo it.
-    ///
-    /// This is the line the old design had nowhere to put, so it put it
-    /// in the search field as grammar. A constraint is a chip: tap it for
-    /// the verbs, tap its ✕ to drop it.
-    @ViewBuilder private var constraintLine: some View {
-        if !terms.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(terms) { term in
-                        Button {
-                            menu = termMenu(term)
-                        } label: {
-                            HStack(spacing: 5) {
-                                if term.exclude {
-                                    Text("not")
-                                        .foregroundStyle(LivTheme.text3)
-                                }
-                                Text(term.value)
-                                    .foregroundStyle(LivTheme.text)
-                                Button {
-                                    drop(term)
-                                } label: {
-                                    Image(systemName: "xmark")
-                                        .font(.system(size: LivChip.glyph, weight: .semibold))
-                                        .foregroundStyle(LivTheme.text3)
-                                        .frame(width: 22, height: LivChip.tall)
-                                        .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.borderless)
-                                .accessibilityLabel("Remove \(term.value)")
-                            }
-                            .font(.system(size: LivType.label, weight: .medium))
-                            .padding(.leading, 11)
-                            .padding(.trailing, 2)
-                            .frame(height: LivChip.tall)
-                            .livGlass(in: Capsule())
-                            .contentShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .livDoor()
-                        .accessibilityLabel(
-                            "\(term.property) \(term.value), "
-                                + (term.exclude ? "hidden" : "only") + ". Change")
-                        .transition(.scale(scale: 0.85).combined(with: .opacity))
-                    }
-                }
-                .padding(.horizontal, 16)
-            }
-            .frame(height: LivChip.tall + 8)
-            .animation(LivMotion.pick, value: terms)
+    private func reveal(_ facet: LivFacet, _ proxy: ScrollViewProxy) {
+        if let lit = facet.values.first(where: { $0.active || $0.excluded }) {
+            proxy.scrollTo(lit.id)
         }
     }
 
     private func chip(_ key: String, _ v: LivFacetValue) -> some View {
-        Button {
-            cycle(key, v)
+        let lit = v.active || v.excluded
+        let id = SearchTerm(property: key, value: v.label, exclude: v.excluded).id
+        return Button {
+            if held == id {
+                held = nil
+            } else {
+                toggle(key, v)
+            }
         } label: {
-            HStack(spacing: 5) {
-                // "not note", not a red strikethrough. Red is the
-                // palette's one warning word and hiding notes from a
-                // search is not a warning; a struck word reads as DONE
-                // in a list app besides. The word says which state it is
-                // in, and both chosen states share ink and weight.
+            HStack(spacing: 6) {
+                // "not note", not a red strikethrough: hiding notes from a
+                // search is not a warning, and a struck word reads as DONE.
                 if v.excluded {
                     Text("not").foregroundStyle(LivTheme.text3)
                 }
                 Text(v.label)
                 Text("\(v.count)")
-                    .font(.system(size: LivType.caption).monospacedDigit())
-                    .foregroundStyle(LivTheme.text3)
+                    .font(.system(size: LivType.label).monospacedDigit())
+                    .foregroundStyle(lit ? LivTheme.text2 : LivTheme.text3)
             }
-            // CHOSEN IS INK AND WEIGHT, not a saturated capsule. The
-            // same mark the Tasks filter row, the Inbox lens and the day
-            // strip use — this was the last chip in the app still
-            // filling itself with the accent and inverting its text
-            // (polish pass, 2026-08-31).
-            .font(
-                .system(
-                    size: LivType.label,
-                    weight: (v.active || v.excluded) ? .medium : .regular))
-            .foregroundStyle((v.active || v.excluded) ? LivTheme.text : LivTheme.text2)
-            .padding(.horizontal, 11)
-            .frame(height: LivChip.tall)
-            .background(
-                Capsule().fill((v.active || v.excluded) ? LivTheme.panel2 : .clear))
+            .font(.system(size: LivType.body, weight: lit ? .semibold : .regular))
+            .foregroundStyle(LivTheme.text)
+            .lineLimit(1)
+            .padding(.horizontal, LivFacets.pad)
+            .frame(height: LivFacets.chip)
+            // HOLLOW UNTIL PICKED, then the plate a chosen segment wears
+            // (`LivSegment`) — one mark for "chosen" across the app.
+            .background(Capsule().fill(lit ? LivTheme.thumb : .clear))
+            .overlay(
+                Capsule().strokeBorder(
+                    lit ? .clear : LivTheme.border2, lineWidth: LivChip.addOutline))
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .livDoor()
-        // THE SECOND DOOR to the verbs, for someone who already knows:
-        // hold a chip to hide its value without including it first. The
-        // same simultaneous gesture the bar's `+` uses, so the tap still
-        // fires (Bar.swift).
+        // HOLD A CHIP for the verbs — Only, Hide, Any. The same
+        // simultaneous gesture the bar's `+` uses (Bar.swift).
         .simultaneousGesture(
             LongPressGesture(minimumDuration: 0.45).onEnded { _ in
+                held = id
                 menu = termMenu(
                     SearchTerm(property: key, value: v.label, exclude: v.excluded))
             })
@@ -511,25 +473,19 @@ struct SearchView: View {
                 + (v.active ? ", included" : v.excluded ? ", excluded" : ""))
     }
 
-    /// ONE TAP INCLUDES, and tapping the same chip again drops it.
-    ///
-    /// The old gesture was a CYCLE — include, then exclude, then off —
-    /// which cannot be labelled before you tap it, and whose second tap
-    /// flipped the results to the opposite of the first (owner,
-    /// 2026-09-06: "'-type:foo' to exclude is not good on a phone and
-    /// isn't obvious"). Excluding is a named verb in a menu now, so a
+    /// ONE TAP PICKS, and tapping a lit chip — picked or hidden — puts it
+    /// back. Hiding is a named verb in the menu a held chip opens (owner,
+    /// 2026-09-06: "'-type:foo' to exclude is not good on a phone"), so a
     /// tap only ever means one thing.
-    private func cycle(_ key: String, _ v: LivFacetValue) {
-        if v.active {
-            drop(SearchTerm(property: key, value: v.label, exclude: false))
+    private func toggle(_ key: String, _ v: LivFacetValue) {
+        if v.active || v.excluded {
+            drop(SearchTerm(property: key, value: v.label, exclude: v.excluded))
         } else {
             set(SearchTerm(property: key, value: v.label, exclude: false))
         }
     }
 
-    /// THE THREE VERBS, in words, on a chip you can see. Reached by
-    /// tapping the constraint chip under the field, or by holding a chip
-    /// in the band.
+    /// THE THREE VERBS, in words. Reached by holding a chip.
     private func termMenu(_ term: SearchTerm) -> LivMenu {
         let live = terms.first { $0.id == term.id }
         return LivMenu(

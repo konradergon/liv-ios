@@ -2205,32 +2205,44 @@ cmd_under() {
 # saved filters. A workspace's lens is the same core path and is walked
 # by every check that boots into one.
 
-# THE FACET ROW: the counts the core has always computed, finally drawn.
+# THE FILTER ROWS: one per property you can narrow by, its name at the
+# margin, a count on every chip — and what you picked lit IN its row.
 #
-# `services::search::facet` runs a probe query per candidate value on every
-# search and returns how many results each value would leave, plus whether
-# the query already includes or excludes it. Nothing decoded it until
-# 2026-08-26. This check is here because that is exactly the kind of thing
-# that goes quiet again without anyone noticing.
+# Until 2026-10-01 a second line above the rows repeated every pick (owner:
+# "duplicative"). It went when Rust began keeping a picked chip even where
+# nothing is left to count, so the row is the way back too. Rust also
+# offers a row only when tapping in it would change the list, so this
+# check makes its own query rather than trusting the box: a word nothing
+# else carries, on a note, a task in an area and a task in none.
 cmd_facets() {
+  local word="facets$(date +%H%M%S)" made=() id
+  id=$(seed new note "$word plan") || return 1; made+=$id
+  id=$(seed new task "$word paint" --area "Drive area") || return 1; made+=$id
+  id=$(seed new task "$word fence") || return 1; made+=$id
+  facets_walk "$word"
+  local rc=$?
+  for id in $made; do seed trash "$id" >/dev/null; done
+  return $rc
+}
+
+facets_walk() {
+  local word="$1"
   # BOOT FIRST. Run after `grid` this lands in a document with the keyboard
   # up, and the bar retires under a keyboard — so the Search key is not on
-  # screen and the check fails about the wrong thing. Every check that needs
-  # the bar starts from a known launch.
+  # screen and the check fails about the wrong thing.
   cmd_boot >/dev/null || { die "could not boot before the facet check."; return 1 }
   cmd_tap "Search" || return 1
   # WAIT for the field, do not assume the sheet is up. Typing into a sheet
-  # that has not arrived types into whatever has focus, and the check then
-  # reports "no facet chips" about a screen that was never search.
+  # that has not arrived types into whatever has focus.
   wait_field || { die "the search sheet did not open."; return 1 }
-  axe type "note" --udid "$UDID" >/dev/null || { die "could not type into search."; return 1 }
+  axe type "$word" --udid "$UDID" >/dev/null || { die "could not type into search."; return 1 }
   perl -e 'select(undef,undef,undef,2.5)'
   local chips
   chips=$(facet_chips)
-  (( $(print -r -- "$chips" | wc -l) >= 2 )) || {
-    die "no facet chips on screen for the query 'note'.
-      The core sends counts for every select property on every search; if
-      none are drawn, the shell is throwing them away again."
+  (( $(print -r -- "$chips" | wc -l) >= 3 )) || {
+    die "searching '$word' (a note, a task in Drive area, a task in none)
+      drew these chips: '${chips//$'\n'/ | }'. Expected Task, Note, and
+      Drive area at least."
     return 1
   }
   # Every chip must carry a count, or it is a filter you cannot judge.
@@ -2243,20 +2255,10 @@ raise SystemExit(1 if bad else 0)' || {
     return 1
   }
 
-  # THE PROPERTY NAMES ARE ON SCREEN. Until 2026-09-07 the band was one
-  # horizontal scroller holding every property side by side, so only the
-  # first was visible and the screen never said what you could narrow by
-  # (owner: "it isn't obvious how"). One row per property now, the name at
-  # the margin — so at least two names must be fully inside the screen.
-  #
-  # A NAME IS ONE WITH CHIPS BESIDE IT (2026-09-26). This read "a
-  # capitalised word at the margin between y 100 and 460" — a window that
-  # assumed the keyboard was up. `axe type` is a HARDWARE keyboard to iOS,
-  # which then hides the software one, so the band sits at the foot of the
-  # sheet (y ~700) and the window held none of it; the check passed on
-  # the Today screen BEHIND the sheet, whose "Late" and day letters it
-  # counted as property names. A property name is now a margin word that
-  # shares its row with a facet chip, wherever the band happens to be.
+  # THE PROPERTY NAMES ARE ON SCREEN, each at the margin of its own row
+  # (owner, 2026-09-06: "it isn't obvious how"). A name is a margin word
+  # that shares its row with a facet chip, wherever the rows happen to be:
+  # `axe type` is a hardware keyboard, so the software one never rises.
   local named
   named=$(axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
 import json, re, sys
@@ -2280,78 +2282,74 @@ if not w: w = 440
 print(len([1 for _, mid, right in names
            if right <= w and any(abs(mid - c) < 12 for c in chips)]))")
   (( named >= 2 )) || {
-    die "only ${named:-0} property name(s) are fully on screen in the facet band.
-      Every property gets its own row with its name at the margin; if they
-      are off the right edge again, the band is one scroller once more."
+    die "only ${named:-0} property name(s) are fully on screen beside the
+      filter chips. Every property gets its own row, its name at the margin."
     return 1
   }
 
-  # ONE TAP INCLUDES, AND THE FIELD STAYS THE PERSON'S WORDS.
-  #
-  # This is the assertion the check exists for now, and it is the exact
-  # inverse of the one it carried until 2026-09-07: that one required the
-  # query text to CONTAIN a colon after a tap, which pinned the leak open
-  # (owner: "clunky things like 'type:foo' appearing in search bar").
+  # ONE TAP PICKS, THE FIELD STAYS THE PERSON'S WORDS, and the pick is lit
+  # in its own row — with nothing repeating it anywhere else.
   local first=$(print -r -- "$chips" | head -1)
+  local value=$(print -r -- "$first" | sed 's/^[a-z][a-z ]* //; s/,.*//')
   cmd_tap "$first" || return 1
   local q=$(query_text)
-  [[ "$q" == "note" ]] || {
-    die "tapping '$first' changed the search field to '$q'.
-      The field holds what the PERSON typed; a picked constraint is a chip
-      under it. Grammar in the field is standing rule 5 breaking."
+  [[ "$q" == "$word" ]] || {
+    die "tapping '$first' changed the search field to '$q'. The field holds
+      what the person typed; a pick is a lit chip, never grammar."
     return 1
   }
-  local lit=$(facet_chips | python3 -c '
-import sys
-print(next((l.strip() for l in sys.stdin if "included" in l), ""))')
-  [[ -n "$lit" ]] || { die "tapped a chip and none reads as included."; return 1 }
-  # And the choice is VISIBLE as its own chip, which is the way back.
-  local line=$(constraint_chips)
-  [[ -n "$line" ]] || {
-    die "included a value and no constraint chip appeared under the field.
-      What you chose has to be on screen, or there is nothing to undo."
+  local lit=$(facet_chips | grep -m1 ", included$")
+  [[ -n "$lit" ]] || { die "tapped '$first' and no chip reads as included."; return 1 }
+  local again=$(scan 'def walk(n):
+    l = n.get("AXLabel") or ""
+    if n.get("type") == "Button" and l.endswith(". Change"): print(l)
+    for c in n.get("children") or []: walk(c)')
+  [[ -z "$again" ]] || {
+    die "the pick is repeated outside its row: '$again'. The owner named
+      that line duplicative on 2026-10-01."
     return 1
   }
 
-  # EXCLUDE IS A NAMED VERB, not a second tap. Tap the constraint chip,
-  # take the middle row.
-  cmd_tap "$line" || return 1
-  local value=$(print -r -- "$line" | sed 's/^[a-z][a-z ]* //; s/,.*//')
+  # HOLD FOR THE VERBS, and the hold must not undo the pick: the hold is
+  # simultaneous, so the lift fires a tap too, and until 2026-10-01 that
+  # tap un-picked the chip the menu was opened about.
+  local x y
+  read x y <<< "$(LABEL="$lit" scan 'import os
+def walk(n):
+    f = n.get("frame") or {}
+    if n.get("type") == "Button" and n.get("AXLabel") == os.environ["LABEL"]:
+        print(round(f["x"] + f["width"] / 2), round(f["y"] + f["height"] / 2))
+    for c in n.get("children") or []: walk(c)' | head -1)"
+  [[ -n "${y:-}" ]] || { die "could not find '$lit' to hold."; return 1 }
+  axe touch -x "$x" -y "$y" --down --up --delay 1.0 --udid "$UDID" >/dev/null 2>&1
+  perl -e 'select(undef,undef,undef,1.0)'
+  [[ -n "$(facet_chips | grep -m1 ", included$")" ]] || {
+    die "holding the picked chip '$lit' un-picked it."
+    return 1
+  }
   cmd_tap "Hide $value" || {
-    die "the facet menu has no 'Hide $value' row. Exclusion is a verb in
-      words now, not a hidden third state of a tap."
+    die "holding a chip gave no 'Hide $value'. Hiding is a verb in words,
+      not a hidden third state of a tap."
     return 1
   }
   q=$(query_text)
-  [[ "$q" == "note" ]] || {
-    die "hiding a value put '$q' in the search field. The '-type:x' spelling
+  [[ "$q" == "$word" ]] || {
+    die "hiding a value put '$q' in the search field. The '-kind:x' spelling
       is the storage format and must never be shown."
     return 1
   }
-  local struck=$(facet_chips | python3 -c '
-import sys
-print(next((l.strip() for l in sys.stdin if "excluded" in l), ""))')
+  local struck=$(facet_chips | grep -m1 ", excluded$")
   [[ -n "$struck" ]] || { die "chose Hide and no chip reads as excluded."; return 1 }
 
-  # AND THE WAY OUT. Removing the constraint clears both marks.
-  cmd_tap "Remove $value" || return 1
-  [[ -z "$(constraint_chips)" ]] || {
-    die "removed the constraint and its chip is still under the field."
+  # AND THE WAY OUT IS THE SAME CHIP: a tap on a lit chip puts it back.
+  cmd_tap "$struck" || return 1
+  [[ -z "$(facet_chips | grep -E ", (included|excluded)$")" ]] || {
+    die "tapped the hidden chip and something is still picked."
     return 1
   }
-  say "ok    facets: property names on screen, one tap includes, Hide excludes, and the field stays your words"
+  say "ok    facets: names at the margin, a tap picks in the row and nothing repeats it, a hold hides, a tap puts back"
   cmd_tap "Close search" >/dev/null 2>&1 || true
   cmd_check
-}
-
-# THE CHIPS UNDER THE FIELD — what you chose, as opposed to what is on
-# offer in the band. Their labels end in ", only. Change" or ", hidden.
-# Change", which no facet chip can match (those end in a count).
-constraint_chips() {
-  scan 'def walk(n):
-    l = n.get("AXLabel") or ""
-    if n.get("type") == "Button" and l.endswith(". Change"): print(l)
-    for c in n.get("children") or []: walk(c)'
 }
 
 # WAIT for the search sheet's field, rather than assuming the sheet is up.

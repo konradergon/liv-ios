@@ -194,8 +194,12 @@ struct CalendarView: View {
             loadWindow()
             box.statusOptions(kind: "task") { taskOptions = $0 }
         }
-        // The landed block lets go the moment the calendar agrees with it.
-        .onReceive(box.$calendar) { _ in settle() }
+        // The landed block lets go the moment the calendar agrees with it
+        // — the answer HANDED IN, because a `@Published` publisher fires
+        // before the property is set: reading `box.calendar` here saw the
+        // old time, the block was never let go, and the bin stayed up
+        // after every move (owner, 2026-10-01).
+        .onReceive(box.$calendar) { settle($0) }
         .onChange(of: monthFirst) { _, _ in loadWindow() }
         .onChange(of: workspaces.lensIds) { _, _ in loadWindow() }
         .onChange(of: scenePhase) { _, phase in
@@ -465,12 +469,13 @@ struct CalendarView: View {
             // all.
             hourGrid(timed: timed, today: today)
         }
-        // The bin rides OVER the foot of the timeline while something is
-        // in the air, and takes no space when nothing is.
+        // The bin rides OVER the foot of the timeline while a finger holds
+        // a block, and takes no space when nothing is in the air. A block
+        // that has landed and waits for the box is not in the air.
         .overlay(alignment: .bottom) {
-            if lifted != nil { trashZone_ }
+            if lifted?.airborne == true { trashZone_ }
         }
-        .animation(LivMotion.nav, value: lifted != nil)
+        .animation(LivMotion.nav, value: lifted?.airborne == true)
     }
 
     // MARK: the hour grid
@@ -797,9 +802,9 @@ struct CalendarView: View {
     /// and the snapshot arriving. It ends when the entity's own stamp is
     /// where the finger left it — or when the entity is no longer on
     /// this day at all, which is the same answer for a different reason.
-    private func settle() {
+    private func settle(_ calendar: [LivCalendarDay]?) {
         guard let held = lifted, !held.airborne else { return }
-        let row = (box.calendar ?? []).lazy
+        let row = (calendar ?? []).lazy
             .flatMap { $0.timed ?? [] }
             .first { $0.id == held.id }
         guard let row, let due = row.due else {

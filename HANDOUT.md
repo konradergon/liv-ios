@@ -13,15 +13,14 @@ product page is `design/what-liv-is-for.md`.
 
 ## 2. Where things stand
 
-- **Branch** `polish-pass-lmkl30`, pushed. Everything up to 30 Sep is
-  committed (`02af0ac`, merged with the clearer spec's four commits from
-  GitHub as `b304932`). Uncommitted: the doc clean-up of 1 Oct (this
-  file, `CLAUDE.md`, `design/archive/`).
+- **Branch** `polish-pass-lmkl30`, pushed up to `fd111fa` (reminders in
+  Rust). Uncommitted: the owner's pre-sync UI list of 1 Oct — search
+  filters, the calendar bin, the card pill, the editor (changelog).
 - **Every screen reads Rust's answers**; Swift draws. A refresh reads the
   library and the screen on show, nothing else. The clerk's sweep is
   linear again. Reminders are Rust's too (`liv_view_reminders`). The
   door (`ffi/liv.h`) has 49 functions.
-- **Checks**: `cargo test` 375. `suites.sh` 13/13. Every `drive.sh` check
+- **Checks**: `cargo test` 388. `suites.sh` 13/13. Every `drive.sh` check
   passes (1 Oct); `cycles` is a report, not a check. Checks that need
   something on screen make it through the CLI (`seed`) and trash it after.
 - **Gone with `core/` on 29 Sep, not rebuilt**: repeating events,
@@ -112,15 +111,19 @@ included. Filing asks where first; other kinds sit behind "Not a note…".
 It ignores the workspace, so nothing made in the wrong one vanishes.
 
 **Notes and the editor.** Markdown syntax shows only on the caret's line;
-links show as their name. Making a link opens Search. A nameless thing
+links show as their name. Making a link opens Search. Six heading sizes,
+`#` largest to `######` at body size; seven `#` is text. A code block is
+monospace on a tint, nothing in it read as markdown. A nameless thing
 reads as its kind and time ("Note · 29 Sep 17:26"). History has Restore.
 
 **Calendar.** The timeline is the screen, the month is a jump card. Hold
 to place, drag, release to create; hold a block to move it or drop it on
 the bin. Quarter-hour times.
 
-**Search.** The field at the foot holds only your words; picked filters
-are chips.
+**Search.** The field at the foot holds only your words. Filters are
+rows of chips over it, one per property; a picked one is lit in its row
+and nowhere else, and a tap puts it back. Counts are over what the words
+found.
 
 **Properties.** A card of its own, Settings-style; `tags` reads
 "Subject".
@@ -147,8 +150,13 @@ gradients, area tiles, bottom fades.
   a reminder never reaches the screen there; the pipeline was checked up to
   iOS (1 Oct). Allow them in its Settings to watch one ring.
 - Light mode renders faintly; nobody has drawn it.
-- A `- [ ]` inside a code block gets a live checkbox. A link to a trashed
-  thing turns into plain text on save and does not come back.
+- A link to a trashed thing turns into plain text on save and does not
+  come back.
+- A nameless thing's title ("Task · 1 Oct 04:07") is in UTC, not the
+  phone's time: the made name needs the phone's offset, and four
+  row-returning verbs do not take one. A door change — the owner's call.
+- In notes: URLs are not links, `_x_` and `__x__` stay literal, quotes and
+  callouts are only grey text.
 - Pages scanned sideways are read rotated.
 - Deferred by name: templates, a replacement for filters, the desktop
   shell, and everything in §2 gone with `core/`.

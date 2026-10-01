@@ -49,6 +49,7 @@ enum InlineRun: Equatable {
     case marker(NSRange)  // the ** / * / ~~ / ` glyphs themselves
     case bold(NSRange)  // the text between the markers
     case italic(NSRange)
+    case boldItalic(NSRange)  // ***both***, what the codec writes for the pair
     case strike(NSRange)
     case code(NSRange)  // content between backticks
     case refToken(NSRange, name: NSRange?)  // whole [[…]]; name part if any
@@ -215,6 +216,16 @@ enum MarkScan {
                     }
                 }
             }
+            // ***bold italic*** — tested before `**`, which it starts with.
+            if c == 0x2A, i + 2 < u.count, u[i + 1] == 0x2A, u[i + 2] == 0x2A,
+                let close = find([0x2A, 0x2A, 0x2A], from: i + 3), close > i + 3
+            {
+                out.append(.marker(NSRange(location: i, length: 3)))
+                out.append(.boldItalic(NSRange(location: i + 3, length: close - i - 3)))
+                out.append(.marker(NSRange(location: close, length: 3)))
+                i = close + 3
+                continue
+            }
             // **bold**
             if c == 0x2A, i + 1 < u.count, u[i + 1] == 0x2A,
                 let close = find([0x2A, 0x2A], from: i + 2), close > i + 2
@@ -246,6 +257,70 @@ enum MarkScan {
                 continue
             }
             i += 1
+        }
+        return out
+    }
+}
+
+// MARK: - code blocks
+
+/// Where a note's code blocks are, as character ranges: the ``` lines,
+/// and what lies between a pair.
+struct Fences: Equatable {
+    var markers: [NSRange] = []
+    var code: [NSRange] = []
+
+    func isMarker(lineAt location: Int) -> Bool {
+        markers.contains { $0.location == location }
+    }
+
+    func isCode(lineAt location: Int) -> Bool {
+        code.contains { location >= $0.location && location < NSMaxRange($0) }
+    }
+
+    /// Inside a block, or one of its ``` lines: nothing here is markdown.
+    func isBlock(lineAt location: Int) -> Bool {
+        isMarker(lineAt: location) || isCode(lineAt: location)
+    }
+}
+
+extension MarkScan {
+    /// A ``` line opens or closes a code block — the one block that spans
+    /// lines, so a line alone cannot say what it is. The codec, the
+    /// styler, the outline and Return all ask this; until 2026-10-01 only
+    /// the codec did, so a `#` inside a block was drawn as a heading and a
+    /// `- [ ]` as a live checkbox while the note stored them as code.
+    static func isFence(_ line: String) -> Bool {
+        line.trimmingCharacters(in: .whitespaces).hasPrefix("```")
+    }
+
+    /// The code blocks in a whole note: every ``` line, and what lies
+    /// between a pair — to the end of the note when the last never
+    /// closes, as the codec reads it. It SEARCHES for ``` rather than
+    /// walking every line, so the typing path can afford it.
+    static func fences(in s: NSString) -> Fences {
+        var out = Fences()
+        var open: Int?
+        var from = 0
+        while from < s.length {
+            let hit = s.range(
+                of: "```", options: .literal,
+                range: NSRange(location: from, length: s.length - from))
+            guard hit.location != NSNotFound else { break }
+            let line = s.paragraphRange(for: hit)
+            if isFence(s.substring(with: line)) {
+                out.markers.append(line)
+                if let start = open {
+                    out.code.append(NSRange(location: start, length: line.location - start))
+                    open = nil
+                } else {
+                    open = NSMaxRange(line)
+                }
+            }
+            from = NSMaxRange(line)
+        }
+        if let start = open, start < s.length {
+            out.code.append(NSRange(location: start, length: s.length - start))
         }
         return out
     }
@@ -323,6 +398,8 @@ enum EditOps {
     static func returnKey(_ text: String, selection: NSRange) -> EditResult? {
         guard selection.length == 0 else { return nil }
         let (r, l) = line(text, at: selection.location)
+        // Code is not a list, whatever it looks like.
+        guard !MarkScan.fences(in: text as NSString).isBlock(lineAt: r.location) else { return nil }
         // Only act at end-of-line — mid-line return splits the line plainly.
         guard selection.location == r.location + r.length else { return nil }
         let shape = MarkScan.shape(l)
@@ -687,10 +764,11 @@ struct OutlineItem: Identifiable, Equatable {
 /// called on a debounce and when a note loads — never on the typing path.
 func livOutline(_ text: String) -> [OutlineItem] {
     let n = text as NSString
+    let fences = MarkScan.fences(in: n)
     var out: [OutlineItem] = []
     n.enumerateSubstrings(in: NSRange(location: 0, length: n.length), options: [.byLines]) {
         line, range, _, _ in
-        guard let line else { return }
+        guard let line, !fences.isBlock(lineAt: range.location) else { return }
         let shape = MarkScan.shape(line)
         guard case .heading(let level) = shape.block else { return }
         let title = livDisplayTitle(line)
@@ -739,7 +817,7 @@ func livDisplayTitle(_ raw: String) -> String {
                 skip.append(
                     NSRange(location: NSMaxRange(name), length: NSMaxRange(whole) - NSMaxRange(name)))
             }
-        case .bold, .italic, .strike, .code: break
+        case .bold, .italic, .boldItalic, .strike, .code: break
         }
     }
     skip.sort { $0.location < $1.location }
@@ -786,6 +864,10 @@ func livEditorSelfCheck() -> [String] {
     let runs = MarkScan.inline("a **b** and `c` [[0000000000000000000000000000002a|Home]]", from: 0)
     check("bold found", runs.contains(.bold(NSRange(location: 4, length: 1))), "\(runs)")
     check("code found", runs.contains(.code(NSRange(location: 13, length: 1))), "\(runs)")
+    check(
+        "bold italic found",
+        MarkScan.inline("a ***b*** c", from: 0).contains(.boldItalic(NSRange(location: 5, length: 1))),
+        "\(MarkScan.inline("a ***b*** c", from: 0))")
     check(
         "ref found",
         runs.contains(
@@ -1060,6 +1142,30 @@ func livEditorSelfCheck() -> [String] {
         "a paragraph range covering the line reveals it",
         MarkStyler.reveals(NSRange(location: 10, length: 6), line: line))
     check("no caret reveals nothing", !MarkStyler.reveals(nil, line: line))
+
+    // CODE BLOCKS: one rule for the codec, the styler, the outline and
+    // Return (2026-10-01).
+    let doc = "a\n```swift\n# not a heading\n- [ ] no\n```\n# Real" as NSString
+    let fences = MarkScan.fences(in: doc)
+    check("two fence lines", fences.markers.count == 2, "\(fences)")
+    check("a heading in a block is code", fences.isCode(lineAt: doc.range(of: "# not").location))
+    check("a task in a block is code", fences.isCode(lineAt: doc.range(of: "- [ ] no").location))
+    check("after the block is not code", !fences.isBlock(lineAt: doc.range(of: "# Real").location))
+    check("before the block is not code", !fences.isBlock(lineAt: 0))
+    check("an unclosed block runs to the end", MarkScan.fences(in: "```\nx\ny").isCode(lineAt: 6))
+    check("backticks mid-line are no fence", MarkScan.fences(in: "say ```x``` here").markers.isEmpty)
+    check(
+        "the outline skips code", livOutline(doc as String).map(\.title) == ["Real"],
+        "\(livOutline(doc as String))")
+    check(
+        "Return in code continues nothing",
+        EditOps.returnKey(
+            doc as String,
+            selection: NSRange(location: NSMaxRange(doc.range(of: "- [ ] no")), length: 0)) == nil)
+    check(
+        "the codec stores a block as code",
+        SpanText.textToSpans("```\n# x\n```") == [.brk(.code(lang: nil)), .text("# x", marks: 0)],
+        "\(SpanText.textToSpans("```\n# x\n```"))")
 
     return failures
 }

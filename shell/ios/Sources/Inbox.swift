@@ -658,9 +658,7 @@ struct InboxView: View {
             chipUndo = undo
         }
         let shown = text
-        // 5s, the desk's trash-chip window — an undo offer must outlive
-        // the glance that notices it.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + LivMotion.offerSeconds) {
             guard chipText == shown else { return }
             withAnimation(LivMotion.nav) { chipText = nil }
         }

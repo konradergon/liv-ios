@@ -309,9 +309,10 @@ enum SpanText {
         }
     }
 
-    /// A run's delimiters, outermost to innermost: ~~ ** * `. Single
-    /// marks are the whole supported set — the scanner is flat, so a
-    /// combination cannot be re-derived and carriesFormatting says so.
+    /// A run's delimiters, outermost to innermost: ~~ ** * `. The scanner
+    /// is flat, so a combination cannot be re-derived and
+    /// carriesFormatting says so — except bold with italic, whose `***`
+    /// the scanner reads as one run.
     private static func delimited(_ t: String, marks: UInt8) -> String {
         var out = t
         if marks & 4 != 0 { out = "`\(out)`" }
@@ -372,8 +373,8 @@ enum SpanText {
         var lang: String? = nil
         var wrote = false
         for line in text.components(separatedBy: "\n") {
-            let bare = line.trimmingCharacters(in: .whitespaces)
-            if bare.hasPrefix("```") {
+            if MarkScan.isFence(line) {
+                let bare = line.trimmingCharacters(in: .whitespaces)
                 if inFence {
                     inFence = false
                     lang = nil
@@ -462,6 +463,7 @@ enum SpanText {
                 continue
             case .bold(let r): range = r; marks = 1
             case .italic(let r): range = r; marks = 2
+            case .boldItalic(let r): range = r; marks = 3
             case .code(let r): range = r; marks = 4
             case .strike(let r): range = r; marks = 8
             case .refToken(let r, _):
@@ -1500,8 +1502,10 @@ func livSpanCodecSelfCheck() -> [String] {
     check("single marks are not flagged",
         !SpanText.carriesFormatting([.text("b", marks: 1)]))
     check("other is flagged", SpanText.carriesFormatting([.brk(.other)]))
-    check("combined marks are flagged",
-        SpanText.carriesFormatting([.text("x", marks: 3)]))
+    check("bold with italic is held",
+        !SpanText.carriesFormatting([.text("x", marks: 3)]))
+    check("other combined marks are flagged",
+        SpanText.carriesFormatting([.text("x", marks: 5)]))
     check("a delimiter inside its own mark is flagged",
         SpanText.carriesFormatting([.text("a**b", marks: 1)]))
     check("an empty marked run is flagged",
@@ -1643,7 +1647,10 @@ func livSpanCodecSelfCheck() -> [String] {
     check("code keeps its language", decoded.count > 3 && decoded[3] == .brk(.code(lang: "swift")))
     check("callout keeps its kind", decoded.count > 4 && decoded[4] == .brk(.callout(kind: "note")))
     check("task keeps done", decoded.count > 5 && decoded[5] == .brk(.task(depth: 1, done: true)))
-    check("combined marks flag", SpanText.carriesFormatting(decoded))
+    check("bold with italic is held", !SpanText.carriesFormatting(decoded))
+    check(
+        "other combined marks flag",
+        SpanText.carriesFormatting(decoded + [.text("k", marks: 5)]))
     check("plain doc is not flagged", !SpanText.carriesFormatting(refDoc))
 
     return failures

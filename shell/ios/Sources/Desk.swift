@@ -1096,7 +1096,7 @@ struct DeskHost: View {
             chipUndo = undo
         }
         let shown = text
-        DispatchQueue.main.asyncAfter(deadline: .now() + (undo == nil ? 2.0 : 5.0)) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + (undo == nil ? 2.0 : LivMotion.offerSeconds)) {
             guard chipText == shown else { return }
             withAnimation(LivMotion.nav) {
                 chipText = nil

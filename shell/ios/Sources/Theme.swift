@@ -176,59 +176,32 @@ enum LivType {
     /// A SCREEN's name (`LivScreenTitle`), bold, with its accent stop.
     static let screen: CGFloat = 34
 
-    /// THE EDITOR'S OWN SCALE, and the fact that it is a second one.
-    ///
-    /// The markdown editor draws with TextKit, so it needs `UIFont`
-    /// sizes rather than the steps above — but that is a reason for
-    /// different UNITS, not for different NUMBERS, and until 2026-09-07
-    /// these lived as literals inside `EditorText.swift`, dated
-    /// 2026-07-31: they predate `LivType` entirely.
-    ///
-    /// They were moved here UNCHANGED, on purpose (design/editor-study.md:
-    /// "move the numbers to Theme.swift without changing them, so the
-    /// drift is visible"). And it is visible: `body` is 16 while every
-    /// list row that opens a note is `LivType.body` at 18.
-    ///
-    /// THE SECOND EXAMPLE THIS COMMENT USED TO GIVE WAS WRONG, and it
-    /// is worth recording why, because it is the reason to measure a
-    /// drift rather than read one off a list of numbers. It said `mono`
-    /// was 12 "for a code block that is nothing but words" — but the
-    /// font that size fed was never applied to anything. Its only call
-    /// site was `dim()`'s font override, and that went on the owner's
-    /// word on 2026-08-11 ("a marker is greyed, NEVER resized"); the
-    /// styler has no fenced-block branch to put it back. So a size with
-    /// no readers was being cited as visible drift. The size went on
-    /// 2026-09-12 under standing rule 6, and the rev that teaches the
-    /// styler the fence picks its own monospace size rather than
-    /// inheriting one nobody chose.
-    ///
-    /// Closing the `body` gap is NOT a token swap. `EditorFont.listGutter`
-    /// is calibrated against the widest marker at the CURRENT body size,
-    /// and the drawn checkbox and bullet are centred on `body.lineHeight`
-    /// — so a resize has to re-derive all three and be seen on a
-    /// simulator. It is its own rev, on the owner's word.
-    ///
-    /// CLOSED on the clearer boards (2026-09-24): the body is the app's
-    /// own `body` now, aliased so the drift cannot come back, and the list
-    /// gutter, box and dot were re-derived with it — the re-derivation the
-    /// paragraph above warned was its own rev.
+    /// THE EDITOR'S OWN SCALE. TextKit needs `UIFont` sizes rather than
+    /// the steps above — different units, the same numbers where they can
+    /// be: the body IS `body`. The list gutter, the checkbox and the dot
+    /// are measured against the body, so changing it means re-deriving
+    /// them on a simulator.
     enum Editor {
         static let body: CGFloat = LivType.body
-        /// Inline code keeps its old ratio to the body (14.5 : 16).
+        /// Code keeps this ratio to whatever line it sits in (16 : 18).
         static let codeInline: CGFloat = 16
-        static let h1: CGFloat = 24
-        static let h2: CGFloat = 20
-        static let h3: CGFloat = 18
+        /// How far a code block's tint reaches past its words.
+        static let codePad: CGFloat = 6
+        /// THE SIX HEADINGS, `#` to `######`: each a step smaller than the
+        /// one above, the sixth at the body's own size and told apart by
+        /// weight (owner, 2026-10-01). Seven `#` is not a heading and reads
+        /// as the characters it is. Until then there were three sizes, and
+        /// H3 to H6 were all body-size.
+        static let headings: [CGFloat] = [28, 26, 24, 22, 20, 18]
+        /// A heading's line pitch, as a multiple of its size — what a
+        /// heading that wraps keeps between its lines.
+        static let headingPitch: CGFloat = 1.25
         /// The NOTE's title — its own token, so it does not follow the
         /// screen title to 34.
         static let title: CGFloat = 32
-        /// LINE PITCH, baseline to baseline: body 18 on 27, H1 24 on 30,
-        /// H2 20 on 26, H3 18 on 27. TextKit adds the difference from the
-        /// font's own line height as `lineSpacing`.
+        /// The body's LINE PITCH, baseline to baseline. TextKit adds the
+        /// difference from the font's own line height as `lineSpacing`.
         static let line: CGFloat = 27
-        static let h1Line: CGFloat = 30
-        static let h2Line: CGFloat = 26
-        static let h3Line: CGFloat = 27
         /// Air above and below a heading — the TextKit numbers that put
         /// the glyphs where the board's CSS 14 / 4 does, for any font.
         static let headingAbove: CGFloat = 12
@@ -438,10 +411,6 @@ enum LivChip {
     /// was the old height, sized around 11pt text, and the capsule grew
     /// with the text. Never `micro`, which is a badge size.
     static let height: CGFloat = 24
-    /// The roomier variant, for a chip that stands alone in a row rather
-    /// than in a run of them. Same text as `height`; padding is the
-    /// whole difference.
-    static let tall: CGFloat = 30
     /// THE HOLLOW CHIP (`AddChip`): 32 tall, its word at 16 in text2
     /// inside a 1pt `border2` outline — the outline is the whole shape, so
     /// it has to show (clearer spec, 2026-09-29; it was 24, 14 in text3,
@@ -469,6 +438,18 @@ enum LivChip {
     static let guess: CGFloat = 32
     static let guessPad: CGFloat = 12
     static let guessGap: CGFloat = 5
+}
+
+/// SEARCH'S FILTER ROWS (owner, 2026-10-01: "a bit too small and
+/// fiddly… larger text/UI elements"): one row per property, its name at
+/// the margin, its values as body-size chips a thumb can hit.
+enum LivFacets {
+    static let row: CGFloat = 50
+    static let chip: CGFloat = 40
+    static let pad: CGFloat = 14
+    static let gap: CGFloat = 8
+    /// The property's name, before its chips.
+    static let name: CGFloat = 84
 }
 
 enum LivRow {
@@ -916,6 +897,13 @@ enum LivMotion {
     /// spring read about the same, which is to say too fast to have any
     /// weight; a spring wants a little longer to show its shape.
     static let navSeconds: Double = 0.30
+
+    /// HOW LONG AN OFFER STAYS at the foot — Undo on the acknowledgment
+    /// chip, and the pill a swiped-away card leaves. Long enough to
+    /// outlive the glance that notices it, and no longer: the pill used
+    /// to stay until closed, over the foot of every list (owner,
+    /// 2026-10-01: "in the way… shouldn't remain visible for that long").
+    static let offerSeconds: Double = 5
 
     /// HOW A SWIPED ROW ROUNDS AND SQUARES OFF: slowly (owner,
     /// 2026-09-29). Let go, a row reports its rest place at once and then

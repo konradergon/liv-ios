@@ -369,8 +369,7 @@ pub fn search_screen(
     limit: usize,
 ) -> Result<Screen, LogError> {
     let s = parse(e, raw)?;
-    let admitted: Vec<Hit> =
-        search(e, &s, usize::MAX)?.into_iter().filter(|h| lens.admits(h.id)).collect();
+    let admitted = found(e, &s, lens)?;
     let total = admitted.len();
     let cap = if limit == 0 { usize::MAX } else { limit };
     let mut hits = Vec::new();
@@ -381,14 +380,14 @@ pub fn search_screen(
     let words = s.terms.join(" ");
     let exact = !words.is_empty() && hits.iter().any(|r| r.title.to_lowercase() == words);
 
-    let mut facets = Vec::new();
-    for property in facet_properties(e, &s)? {
-        let f = facet(e, &s, property)?;
-        if !f.values.is_empty() {
-            facets.push(f);
-        }
-    }
+    let ids: Vec<EntityId> = admitted.iter().map(|h| h.id).collect();
+    let facets = facets(e, &s, lens, &ids)?;
     Ok(Screen { hits, total, facets, exact })
+}
+
+/// What the whole query finds inside the workspace, in rank order.
+fn found(e: &Engine, s: &Search, lens: &crate::Lens) -> Result<Vec<Hit>, LogError> {
+    Ok(search(e, s, usize::MAX)?.into_iter().filter(|h| lens.admits(h.id)).collect())
 }
 
 /// The four tiers of text one thing offers a search.
@@ -484,13 +483,13 @@ fn score_term(text: &Searchable, term: &str) -> (f32, Field) {
 pub struct FacetValue {
     pub value: Value,
     pub label: String,
-    /// How many things this query WOULD yield if this value were also
-    /// required.
+    /// How many things the search would find with this value picked
+    /// instead of whatever its property has picked now. Zero only for a
+    /// value already picked.
     pub count: usize,
     /// The query already includes it — the chip reads as chosen.
     pub active: bool,
-    /// The query already excludes it. Include → exclude → off is the
-    /// three-state cycle.
+    /// The query already excludes it ("Hide note").
     pub excluded: bool,
 }
 
@@ -501,36 +500,82 @@ pub struct Facet {
     pub values: Vec<FacetValue>,
 }
 
-/// What each value of one property would yield under the current filter.
+/// The chip rows under the field: one per property a person picks from,
+/// counted over what the search found — the words, the other picks and
+/// the workspace all applied. Until 2026-10-01 the count ignored the
+/// words and the workspace, so a search for "note" offered "Task 6": every
+/// task in the box, and none of them a hit.
 ///
-/// **The count EXCLUDES this property's own constraints.** Without that, a
-/// facet you have already picked shows its own count and nothing else, and
-/// there is no way to pivot to a sibling — which is the one thing a facet
-/// row is for.
-pub fn facet(e: &Engine, s: &Search, property: EntityId) -> Result<Facet, LogError> {
-    let mut base = s.query.clone();
-    base.constraints.retain(|c| c.property != property);
+/// **A property's own picks are lifted before its row is counted.**
+/// Without that, a facet you have already picked shows its own count and
+/// nothing else, and there is no way to pivot to a sibling — which is the
+/// one thing a facet row is for. So a count says how many things the
+/// search WOULD find with that value picked instead.
+fn facets(
+    e: &Engine,
+    s: &Search,
+    lens: &crate::Lens,
+    found_ids: &[EntityId],
+) -> Result<Vec<Facet>, LogError> {
+    let mut out = Vec::new();
+    for property in pickable(e)? {
+        let own: Vec<&QueryOp> = s
+            .query
+            .constraints
+            .iter()
+            .filter(|c| c.property == property)
+            .map(|c| &c.op)
+            .collect();
+        let lifted: Vec<EntityId>;
+        let pool = if own.is_empty() {
+            found_ids
+        } else {
+            let mut without = s.clone();
+            without.query.constraints.retain(|c| c.property != property);
+            lifted = found(e, &without, lens)?.into_iter().map(|h| h.id).collect();
+            &lifted
+        };
+        let f = facet(e, property, pool, &own)?;
+        // A row is offered when tapping in it would change the list, or
+        // when it holds a pick to undo. "Note 41" over 41 notes is noise.
+        let narrows = f.values.iter().any(|v| v.count < pool.len());
+        if !own.is_empty() || narrows {
+            out.push(f);
+        }
+    }
+    Ok(out)
+}
 
-    let own: Vec<&QueryOp> = s
-        .query
-        .constraints
-        .iter()
-        .filter(|c| c.property == property)
-        .map(|c| &c.op)
-        .collect();
+/// One row: every value the pool carries, with how many carry it,
+/// count-descending. A value nothing carries is not a choice — except
+/// one already picked.
+fn facet(
+    e: &Engine,
+    property: EntityId,
+    pool: &[EntityId],
+    own: &[&QueryOp],
+) -> Result<Facet, LogError> {
+    let mut counted: Vec<(Value, usize)> = Vec::new();
+    for id in pool {
+        for (_, v) in e.cell(*id, property)? {
+            match counted.iter_mut().find(|(x, _)| *x == v) {
+                Some((_, n)) => *n += 1,
+                None => counted.push((v, 1)),
+            }
+        }
+    }
+    // A PICK KEEPS ITS CHIP when nothing is left to count, so a search
+    // that found nothing can still be undone from the row it was made in.
+    for op in own {
+        if let QueryOp::Equals(v) | QueryOp::NotEquals(v) = op {
+            if !counted.iter().any(|(x, _)| x == v) {
+                counted.push((v.clone(), 0));
+            }
+        }
+    }
 
     let mut values = Vec::new();
-    for value in candidates(e, &base, property)? {
-        let mut probe = base.clone();
-        probe.constraints.push(Constraint {
-            property,
-            op: QueryOp::Equals(value.clone()),
-        });
-        let count = e.run(&probe)?.len();
-        // A value nothing would yield is not a choice.
-        if count == 0 {
-            continue;
-        }
+    for (value, count) in counted {
         values.push(FacetValue {
             active: own.iter().any(|op| matches!(op, QueryOp::Equals(x) if *x == value)),
             excluded: own.iter().any(|op| matches!(op, QueryOp::NotEquals(x) if *x == value)),
@@ -547,53 +592,20 @@ pub fn facet(e: &Engine, s: &Search, property: EntityId) -> Result<Facet, LogErr
     })
 }
 
-/// Which properties are worth a chip row for this result: the kind, plus
-/// every select-shaped property that actually appears on it. Drops facets
-/// that would show nothing, and bounds the cost.
-pub fn facet_properties(e: &Engine, s: &Search) -> Result<Vec<EntityId>, LogError> {
-    let base = e.run(&s.query)?;
-    let present = |property: EntityId| -> Result<bool, LogError> {
-        for id in &base {
-            if e.one(*id, property)?.is_some() {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    };
-
-    let mut out = Vec::new();
-    if present(prop::KIND)? {
-        out.push(prop::KIND);
-    }
+/// What a person can narrow by: the kind, the properties they pick a
+/// value for (status, area, project, people), and every field they
+/// declared that holds a list of choices. Never the plumbing a thing
+/// happens to carry.
+fn pickable(e: &Engine) -> Result<Vec<EntityId>, LogError> {
+    let mut out = vec![prop::KIND];
     for def in model::PROPS.iter() {
-        if def.id == prop::KIND || !matches!(def.holds, model::Holds::RefTo(_)) {
-            continue;
-        }
-        if present(def.id)? {
+        if def.shown && matches!(def.holds, model::Holds::RefTo(_)) {
             out.push(def.id);
         }
     }
     for id in e.of_kind(kind::FIELD)? {
-        if matches!(e.prop_shape(id)?, Some(shape) if matches!(shape.holds, model::Holds::RefTo(_)))
-            && present(id)?
-        {
+        if matches!(e.prop_shape(id)?, Some(shape) if matches!(shape.holds, model::Holds::RefTo(_))) {
             out.push(id);
-        }
-    }
-    Ok(out)
-}
-
-fn candidates(
-    e: &Engine,
-    base: &Query,
-    property: EntityId,
-) -> Result<Vec<Value>, LogError> {
-    let mut out: Vec<Value> = Vec::new();
-    for id in e.run(base)? {
-        for (_, v) in e.cell(id, property)? {
-            if !out.contains(&v) {
-                out.push(v);
-            }
         }
     }
     Ok(out)
