@@ -40,6 +40,7 @@ use std::sync::{Mutex, OnceLock};
 use liv_engine::{Engine, EntityId};
 use liv_surface::calendar::calendar;
 use liv_surface::library::library;
+use liv_surface::reminders::reminders;
 use liv_surface::tasks::tasks;
 use liv_surface::today::today;
 use liv_surface::{Lens, Row};
@@ -332,6 +333,12 @@ struct WireCounts {
 }
 
 #[derive(Serialize)]
+struct WireReminders {
+    soonest: Vec<WireRow>,
+    total: usize,
+}
+
+#[derive(Serialize)]
 struct WireCalendarDay {
     day: i32,
     all_day: Vec<WireRow>,
@@ -496,6 +503,31 @@ pub unsafe extern "C" fn liv_view_library(
         })
     }) {
         Ok(l) => deliver(out, &l),
+        Err(e) => e,
+    }
+}
+
+/// The reminders still to come on the phone's clock, soonest first: the
+/// first `limit`, and how many in all. `now_ms` and `offset_min` as
+/// `liv_view_today`. Which things ring is Rust's; turning a wall-clock due
+/// into an alarm, and the phone's own cap on pending alarms, are the
+/// shell's.
+///
+/// # Safety
+/// `path` must be a valid C string; `out` as `liv_view_today`.
+#[no_mangle]
+pub unsafe extern "C" fn liv_view_reminders(
+    path: *const c_char,
+    now_ms: i64,
+    offset_min: i32,
+    limit: u32,
+    out: *mut *mut c_char,
+) -> i32 {
+    match with_engine(path, |e| {
+        let r = reminders(e, now_ms, offset_min, limit as usize).map_err(|_| LIV_ERR_READ)?;
+        Ok(WireReminders { soonest: wire(&r.soonest), total: r.total })
+    }) {
+        Ok(r) => deliver(out, &r),
         Err(e) => e,
     }
 }

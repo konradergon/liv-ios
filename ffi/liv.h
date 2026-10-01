@@ -141,6 +141,19 @@ int32_t liv_view_tasks(const char *path, const char *project,
 int32_t liv_view_library(const char *path, int64_t now_ms, int32_t offset_min,
                          const char *lens, char **out);
 
+/* The reminders still to come, soonest first. ADDED 2026-10-01.
+
+   {"soonest":[row…], "total":N}
+
+   What rings: an event, or a task still open (a status makes a thing a
+   task), at its clock time — a bare date never rings — after now on the
+   phone's clock (`now_ms`, `offset_min` as liv_view_today), in every
+   workspace, never from the trash or the archive. `soonest` is the first
+   `limit`; `total` counts them all, so a shell with a cap on pending
+   alarms can say how many did not fit. */
+int32_t liv_view_reminders(const char *path, int64_t now_ms, int32_t offset_min,
+                           uint32_t limit, char **out);
+
 /* The calendar: every day from `from_day` to `to_day` (days since the
    epoch, both included) that has anything on it, in order.
 

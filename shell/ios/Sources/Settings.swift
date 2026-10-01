@@ -184,7 +184,7 @@ struct SettingsSheet: View {
             get: { notify.enabled },
             set: {
                 notify.enabled = $0
-                notify.rebuild(snapshot: box.snap, box: box)
+                notify.rebuild(box.reminders)
             })
     }
 

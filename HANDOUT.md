@@ -19,7 +19,8 @@ product page is `design/what-liv-is-for.md`.
   file, `CLAUDE.md`, `design/archive/`).
 - **Every screen reads Rust's answers**; Swift draws. A refresh reads the
   library and the screen on show, nothing else. The clerk's sweep is
-  linear again. The door (`ffi/liv.h`) has 48 functions.
+  linear again. Reminders are Rust's too (`liv_view_reminders`). The
+  door (`ffi/liv.h`) has 49 functions.
 - **Checks**: `cargo test` 375. `suites.sh` 13/13. Every `drive.sh` check
   passes (1 Oct); `cycles` is a report, not a check. Checks that need
   something on screen make it through the CLI (`seed`) and trash it after.
@@ -142,8 +143,9 @@ gradients, area tiles, bottom fades.
 - **There is no way out of the app for your writing** — export went with
   `core/` on 29 Sep; only the CLI reads the box. The product page says so
   and keeps "will not lock your writing in" as the promise.
-- Reminders: `Notify.swift` still decides what rings — the last product
-  rule in Swift.
+- The test simulator (`8E699FF6`) has notifications denied for Liv, so
+  a reminder never reaches the screen there; the pipeline was checked up to
+  iOS (1 Oct). Allow them in its Settings to watch one ring.
 - Light mode renders faintly; nobody has drawn it.
 - A `- [ ]` inside a code block gets a live checkbox. A link to a trashed
   thing turns into plain text on save and does not come back.
@@ -158,7 +160,7 @@ done. **2** `design/` cut to the living docs — done (1 Oct). **3** shorten
 the history comments in each file as it is touched — ongoing, never as a
 sweep.
 
-Then, in the order suggested: move reminders into Rust; then **sync**, the next stage of the engine plan.
+Then **sync**, the next stage of the engine plan.
 The engine already has ops, dots, version vectors and a hold buffer, all
 tested and unused. Ask the owner before starting sync.
 

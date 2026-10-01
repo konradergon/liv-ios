@@ -8,7 +8,7 @@ code disagree, the code is right and this page needs fixing.
 ```
  the iPhone app         shell/ios/   Swift. Draws the screens, handles touch.
         │
- the door               ffi/         48 functions. Text in, JSON out.
+ the door               ffi/         49 functions. Text in, JSON out.
         │
  the screens' answers   surface/     Rust. What Today, Tasks, Notes … show.
  the store              engine/      Rust. The ledger and the current state.
@@ -76,7 +76,8 @@ refusal is written, as a cell, so it syncs.
 
 `surface/`. Rust functions that take the store and return what one screen
 draws, already filtered, grouped and sorted: `today`, `tasks`, `calendar`,
-`search_screen`, the clerk's suggestions, and `library` — every row the app
+`search_screen`, the clerk's suggestions, `reminders` (what rings, and
+when), and `library` — every row the app
 looks things up in, the Notes and Unsorted lists, and the count beside
 each view in the library panel, in one pass over the box. Every rule in
 them has a test, and a count and the list it counts come from the same
@@ -95,12 +96,13 @@ project filter, the Calendar's month.
   `Calendar.swift`.
 - Which icon a row wears, and so how Search groups its hits (`LivKind`
   in `Glyph.swift`).
-- Which things ring as reminders (`Notify.swift`). This is a rule, and
-  the next one to move.
+- The phone's half of a reminder (`Notify.swift`): asking permission,
+  turning a wall-clock due into an alarm, and iOS's cap of 64 pending.
+  Which things ring is Rust's.
 
 ## The door
 
-`ffi/`, declared in `ffi/liv.h`. 48 C functions in four files:
+`ffi/`, declared in `ffi/liv.h`. 49 C functions in four files:
 
 - `surfaces.rs`: one read per screen.
 - `basics.rs`: make, set, trash, restore. What every tap uses.
@@ -118,9 +120,10 @@ freed with `liv_string_free`. The door keeps each box open between calls.
 - **`Box.swift` is the only file that calls the door.** `BoxModel` runs
   every read and write on one background queue, so the app never races
   itself.
-- **After every write, the app reads again.** Six reads always — the
-  library (every row, Notes, Unsorted and the panel's counts), the trash,
-  workspaces, the suggestions switch, the properties and the kinds — plus
+- **After every write, the app reads again.** Seven reads always — the
+  library (every row, Notes, Unsorted and the panel's counts), the
+  reminders, the trash, workspaces, the suggestions switch, the properties
+  and the kinds — plus
   the answer of the ONE screen you are looking at: Today, Tasks, the
   Calendar, or Unsorted's suggestions (`BoxModel.screenChanged`, which
   `DeskHost` calls). A screen is read again as it comes back into view; a

@@ -53,13 +53,14 @@ CHANGING THINGS
 READING
   list [--all]           everything, as a table (--all adds the trash)
   library                every row, Notes, Unsorted and the panel's counts
+  reminders              what rings, soonest first (the app keeps 64)
   today | tasks | trash | day YYYY-MM-DD
   cells ID | links ID | content ID | versions ID
   options PROP | values PROP | properties | kinds | workspaces
   search WORDS... | lens QUERY... | terms QUERY...
   inbox [ID]             what the clerk suggests, about everything or one
                          thing (liv_sweep / liv_sweep_one)
-  snapshot               one refresh: the ten reads the app makes after a write
+  snapshot               one refresh: the reads the app makes after a write
   history                the log, one line per transaction
   probe | file-alerts    is the box readable; which files are missing
 
@@ -222,6 +223,9 @@ impl Liv {
                 })?)
             }
             ("library", []) => show(self.library()?),
+            ("reminders", []) => show(call(|out| unsafe {
+                liv_view_reminders(self.p(), now as i64, local_offset_min(), 64, out)
+            })?),
             ("lens", words) => {
                 let q = c(&words.join(" "));
                 show(call(|out| unsafe { liv_lens(self.p(), q.as_ptr(), out) })?)
@@ -337,6 +341,9 @@ impl Liv {
         let p = self.p();
         Ok(json!({
             "library": self.library()?,
+            "reminders": call(|o| unsafe {
+                liv_view_reminders(p, now_ms() as i64, local_offset_min(), 64, o)
+            })?,
             "trash": call(|o| unsafe { liv_view_trash(p, o) })?,
             "suggestions": call(|o| unsafe { liv_sweep(p, o) })?,
             "workspaces": call(|o| unsafe { liv_workspaces(p, o) })?,

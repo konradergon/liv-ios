@@ -1,5 +1,33 @@
 # Liv iOS — changelog (batch summaries; newest first)
 
+## 2026-10-01 — what rings is Rust's
+
+The last product rule decided in Swift. `Notify.swift` walked every row in
+the box after each refresh with its own idea of a task ("typed task, or
+anything with a status"), of done (status names against the vocabulary's
+completing ones) and of what may ring. Now `surface/src/reminders.rs`
+says: an event, or a task still open, at its clock time — a bare date
+never rings (owner, 2026-08-06) — after now on the phone's clock, in every
+workspace, never from the trash or the archive; soonest first, the first
+`limit`, and how many in all. One index seek over what is due after now.
+
+`liv_view_reminders` is new and purely additive (the door is 49 functions).
+The app reads it on every refresh (`BoxModel.reminders`), and `Notify`
+rebuilds the queue whenever the answer changes. What stays in Swift is the
+phone's half: asking permission, turning a wall-clock due into an alarm in
+the phone's zone, and iOS's cap of 64 pending (`Notify.budget`, passed in
+as the limit, so Settings can still say how many did not fit). The CLI
+has `liv reminders`.
+
+Seven tests in `surface/tests/reminders.rs`, one through the door, and the
+read is in the refresh cost test. On the simulator the pipeline was
+checked up to iOS: Rust answered the one task due in two minutes and not
+the finished one beside it, and `Notify` handed iOS one alarm. The test
+simulator has notifications DENIED for Liv (status 1), so nothing reached
+its screen — before this change too.
+
+`cargo test` 383; `suites.sh` 13/13; `drive.sh tour` and `settings` pass.
+
 ## 2026-10-01 — every `drive.sh` check passes
 
 The six left failing were five stale checks and one real bug, each found by

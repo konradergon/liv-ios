@@ -44,6 +44,7 @@ pub mod words;
 
 pub mod calendar;
 pub mod library;
+pub mod reminders;
 pub mod tasks;
 pub mod today;
 

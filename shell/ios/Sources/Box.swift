@@ -322,6 +322,10 @@ final class BoxModel: ObservableObject {
     /// the screen has asked (`watchTasks`), and again after every write
     /// while it is on screen.
     @Published private(set) var tasks: LivTasks?
+    /// **What rings, as Rust answers it** (`liv_view_reminders`): the
+    /// soonest `Notify.budget`, and how many in all. Read on every refresh,
+    /// whatever is on screen — a reminder does not care where you are.
+    @Published private(set) var reminders: LivReminders?
     /// **Notes, Unsorted and the library panel's counts, as Rust answers
     /// them** (`liv_view_library`), in the same read that brings `rows`.
     @Published private(set) var lists = LivLists()
@@ -505,6 +509,7 @@ final class BoxModel: ObservableObject {
         }
         // Second in the lane, after the rows: it is what you are looking at.
         readOnScreen()
+        loadReminders()
         engineTrashRows { [weak self] in
             self?.trashRows = $0
             self?.reindex()
@@ -2894,6 +2899,39 @@ extension BoxModel {
         }) { [weak self] answer, _ in
             guard let self, self.calendarAsk == ask, let answer else { return }
             self.calendar = answer
+        }
+    }
+}
+
+/// What rings, as `liv_view_reminders` answers it: the soonest, and how
+/// many in all. Which things ring is Rust's (`surface/src/reminders.rs`);
+/// turning a wall-clock due into an alarm is `Notify`'s.
+struct LivReminders: Decodable, Equatable {
+    var soonest: [LivReminderRow]?
+    var total: Int?
+}
+
+/// The two facts a reminder needs from its row.
+struct LivReminderRow: Decodable, Equatable {
+    var id: LivID
+    var title: String?
+    var dueMs: Int64?
+
+    /// The due as a packed civil stamp, `YYYYMMDDHHMM` — floating, like
+    /// every due (`EntityRow.due`).
+    var due: Int64? { dueMs.map { Civil.civil(ofFloatingMs: $0) } }
+}
+
+extension BoxModel {
+    fileprivate func loadReminders() {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let offset = Int32(TimeZone.current.secondsFromGMT() / 60)
+        let limit = UInt32(Notify.budget)
+        engineRead(LivReminders.self, { to, out in
+            liv_view_reminders(to, now, offset, limit, out)
+        }) { [weak self] answer, _ in
+            guard let self, let answer, answer != self.reminders else { return }
+            self.reminders = answer
         }
     }
 }

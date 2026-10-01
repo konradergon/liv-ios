@@ -371,9 +371,6 @@ struct RootView: View {
             // whenever the box moves — a note created a moment ago must
             // enter a filtered view, and only the box knows if it belongs.
             workspaces.refreshLens(box)
-            // Every decoded snapshot rebuilds the notification schedule —
-            // the queue is a projection of the box, never patched (M5).
-            Notify.shared.rebuild(snapshot: snap, box: box)
             guard let snap else { return }
             if !furnished {
                 furnished = true
@@ -394,6 +391,9 @@ struct RootView: View {
             desk.adopt(workspace: id)
             workspaces.refreshLens(box)
         }
+        // The notification queue is rebuilt whole from Rust's answer of
+        // what rings, whenever that answer changes.
+        .onReceive(box.$reminders) { Notify.shared.rebuild($0) }
         // Notes and the library panel's counts wear the workspace, so the
         // library is read through it whenever it answers something new.
         .onChange(of: workspaces.lensIds) { _, ids in box.watchLens(ids) }

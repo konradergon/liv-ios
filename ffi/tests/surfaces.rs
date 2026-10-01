@@ -513,6 +513,28 @@ fn the_library_answers_the_panel_and_its_two_lists() {
 }
 
 #[test]
+fn the_reminders_come_back_soonest_first_with_a_count() {
+    let path = box_path("reminders");
+    {
+        let mut e = Engine::open_local(&path).unwrap();
+        for h in [15i64, 11, 13] {
+            let t = e.create(kind::TASK, Some(&format!("{h}:00")), 1_000).unwrap();
+            e.set(t, prop::DUE, Value::Date(DateSpec::Instant { ms: at(DAY, h, 0), tz: 0 }), 1_001)
+                .unwrap();
+        }
+        let bare = e.create(kind::TASK, Some("A bare date"), 1_002).unwrap();
+        e.set(bare, prop::DUE, Value::Date(DateSpec::Day(DAY + 1)), 1_003).unwrap();
+    }
+    unsafe { liv_view_close_all() };
+    let c = CString::new(path.to_str().unwrap()).unwrap();
+    let v = call(|out| unsafe { liv_view_reminders(c.as_ptr(), at(DAY, 9, 0), 0, 2, out) })
+        .unwrap();
+    assert_eq!(titles(&v["soonest"]), vec!["11:00", "13:00"], "soonest first, cut to the limit");
+    assert_eq!(v["total"], 3, "and every one counted; the bare date does not ring");
+    unsafe { liv_view_close_all() };
+}
+
+#[test]
 fn the_search_screen_comes_back_as_rows_inside_the_lens() {
     use liv_ffi::finding::liv_view_search;
     let path = box_path("search_screen");
@@ -548,13 +570,13 @@ fn the_search_screen_comes_back_as_rows_inside_the_lens() {
 
 /// **ONE REFRESH STAYS LINEAR IN THE BOX** (standing rule 2; 2026-09-29).
 ///
-/// What the app pays after every action is not one read but TEN — exactly
-/// the ones `BoxModel.loadEverything` makes once every screen has been
-/// opened: the library (every row, Notes, Unsorted and the panel's
-/// counts), the trash, the clerk's sweep, the workspaces, the assist
-/// switch, the property list, the kinds, and the three screens that ask
-/// for themselves — Tasks (which carries the checkbox lines in notes),
-/// Today, and the Calendar's three months. It replaces `ffi/src/tests.rs
+/// What the app pays after every action is not one read but several — the
+/// ones `BoxModel.loadEverything` makes once every screen has been opened:
+/// the library (every row, Notes, Unsorted and the panel's counts), the
+/// reminders, the trash, the clerk's sweep, the workspaces, the assist
+/// switch, the property list, the kinds, and the screens that ask for
+/// themselves — Tasks (which carries the checkbox lines in notes), Today,
+/// and the Calendar's three months. It replaces `ffi/src/tests.rs
 /// the_snapshot_stays_linear_in_box_size`, which timed the core
 /// `liv_snapshot` those eight replaced, and goes with `core/` in stage 5.
 ///
@@ -594,6 +616,8 @@ fn one_refresh_stays_linear_in_the_box() {
         let p = CString::new(path.to_str().unwrap()).unwrap();
         let start = std::time::Instant::now();
         call(|out| unsafe { liv_view_library(p.as_ptr(), at(DAY, 9, 0), 0, std::ptr::null(), out) })
+            .unwrap();
+        call(|out| unsafe { liv_view_reminders(p.as_ptr(), at(DAY, 9, 0), 0, 64, out) })
             .unwrap();
         call(|out| unsafe { liv_view_trash(p.as_ptr(), out) }).unwrap();
         call(|out| unsafe { liv_sweep(p.as_ptr(), out) }).unwrap();
