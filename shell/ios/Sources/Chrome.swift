@@ -278,6 +278,9 @@ final class DeskModel: ObservableObject {
     }
 
     @Published var cameraShown = false
+    /// What the share sheet hands on — a note's words, or a file to open
+    /// in the app that owns it. On the model so a file's Open can reach it.
+    @Published var share: SharePayload?
     /// The Settings sheet and the WORKSPACE switcher sheet (distinct from
     /// the tab view). Model state so open() can dismiss
     /// them — as DeskHost-local @State they outlived a notification tap
@@ -991,10 +994,24 @@ final class DeskModel: ObservableObject {
 /// not of any one text view.
 final class KeyboardWatch: ObservableObject {
     @Published var up = false
+    /// Text is being edited — true with a hardware keyboard too, where no
+    /// keyboard rises. Read when it is needed, not drawn, so not published.
+    private(set) var editing = false
     private var tokens: [NSObjectProtocol] = []
 
     init() {
         let nc = NotificationCenter.default
+        for (name, on) in [
+            (UITextView.textDidBeginEditingNotification, true),
+            (UITextView.textDidEndEditingNotification, false),
+            (UITextField.textDidBeginEditingNotification, true),
+            (UITextField.textDidEndEditingNotification, false),
+        ] {
+            tokens.append(
+                nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    self?.editing = on
+                })
+        }
         tokens.append(
             nc.addObserver(
                 forName: UIResponder.keyboardWillShowNotification, object: nil, queue: .main

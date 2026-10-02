@@ -251,7 +251,18 @@ struct SearchView: View {
                 words = seed
                 kick(debounce: false)
             }
-            DispatchQueue.main.async { focused = true }
+            // AFTER THE SLIDE, as the properties card does: asked for
+            // mid-slide, the keyboard could come up over the field. The
+            // `[[` link sheet is the exception — the keyboard is already up
+            // and the letters after `[[` are on their way; for half a
+            // second they had nowhere to go (review, 2026-10-02).
+            if onPick != nil {
+                focused = true
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + LivMotion.coverSeconds) {
+                    focused = true
+                }
+            }
         }
         .onChange(of: words) { _, _ in kick(debounce: true) }
         .onChange(of: workspaces.lensIds) { _, _ in kick(debounce: false) }

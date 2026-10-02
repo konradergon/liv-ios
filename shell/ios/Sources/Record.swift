@@ -144,6 +144,19 @@ struct MinimisedRecordPill: View {
 
 }
 
+/// The pill over Search: above the field it would otherwise sit on, and
+/// gone while you type — the keyboard has the foot then.
+struct SearchPill: View {
+    @EnvironmentObject var desk: DeskModel
+    @StateObject private var keyboard = KeyboardWatch()
+
+    var body: some View {
+        if let id = desk.minimisedRecord, !keyboard.up {
+            MinimisedRecordPill(id: id).padding(.bottom, LivBar.room + LivBar.gap)
+        }
+    }
+}
+
 /// Attach to every surface that can be standing when a record opens.
 ///
 /// Exactly ONE of them may be active at a time. UIKit gives a presenter

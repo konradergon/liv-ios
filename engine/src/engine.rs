@@ -7,6 +7,8 @@
 //! implies — a second store would need a second commit, and the window
 //! between them is where the two truths start to differ.
 
+use std::path::{Path, PathBuf};
+
 use rusqlite::Connection;
 
 use crate::id::{DeviceId, Dot, EntityId, Hlc, IdGen};
@@ -18,15 +20,18 @@ pub struct Engine {
     conn: Connection,
     hold: Hold,
     ids: IdGen,
+    /// The folder the box was opened in — what a file inside it is
+    /// remembered relative to (`files.rs`). `None` for a box in memory.
+    home: Option<PathBuf>,
 }
 
 impl Engine {
-    pub fn open(path: &std::path::Path, device: DeviceId) -> Result<Engine, LogError> {
-        Engine::wrap(log::open(path)?, device)
+    pub fn open(path: &Path, device: DeviceId) -> Result<Engine, LogError> {
+        Engine::wrap(log::open(path)?, device, home_of(path))
     }
 
     pub fn open_in_memory(device: DeviceId) -> Result<Engine, LogError> {
-        Engine::wrap(log::open_in_memory()?, device)
+        Engine::wrap(log::open_in_memory()?, device, None)
     }
 
     /// Open a box as THIS device, whichever that turns out to be.
@@ -36,19 +41,19 @@ impl Engine {
     /// saying "I am this writer" and had better mean it — a re-minted id
     /// restarts a per-device seq counter against history the box already
     /// holds. Shells use this one.
-    pub fn open_local(path: &std::path::Path) -> Result<Engine, LogError> {
+    pub fn open_local(path: &Path) -> Result<Engine, LogError> {
         let conn = log::open(path)?;
         let device = log::device(&conn)?;
-        Engine::wrap(conn, device)
+        Engine::wrap(conn, device, home_of(path))
     }
 
-    fn wrap(conn: Connection, device: DeviceId) -> Result<Engine, LogError> {
+    fn wrap(conn: Connection, device: DeviceId, home: Option<PathBuf>) -> Result<Engine, LogError> {
         conn.execute_batch(view::SCHEMA)?;
         let mut ids = IdGen::new(device);
         if let Some(newest) = log::newest_stamp(&conn)? {
             ids.resume(newest);
         }
-        Ok(Engine { conn, hold: Hold::default(), ids })
+        Ok(Engine { conn, hold: Hold::default(), ids, home })
     }
 
     pub fn device(&self) -> DeviceId {
@@ -57,6 +62,10 @@ impl Engine {
 
     pub fn conn(&self) -> &Connection {
         &self.conn
+    }
+
+    pub(crate) fn home(&self) -> Option<&Path> {
+        self.home.as_deref()
     }
 
     /// A fresh entity id, minted on this device.
@@ -285,4 +294,13 @@ impl Engine {
     pub fn touched(&self, id: EntityId) -> Result<i64, LogError> {
         Ok(view::touched(&self.conn, id)?)
     }
+}
+
+/// The folder a box file sits in, spelled as the caller spelled it.
+///
+/// **Made whole, not canonical.** The shell builds a file's path from the
+/// same string it opened the box with, so resolving a symlink here (`/var`
+/// is `/private/var` on a phone) would stop the two from sharing a prefix.
+fn home_of(path: &Path) -> Option<PathBuf> {
+    std::path::absolute(path).ok()?.parent().map(Path::to_path_buf)
 }

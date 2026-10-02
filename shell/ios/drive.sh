@@ -27,6 +27,10 @@
 #   ./drive.sh desk              one desk of documents, the same in every view; a switcher pick lands
 #   ./drive.sh under             a document lies OVER the view you opened it from, and Back uncovers it
 #   ./drive.sh facets            search draws the core's counts, and chips cycle
+#   ./drive.sh swipe             the panel opens from mid-list, the list stays put, not while editing
+#   ./drive.sh files             a file beside the box opens as its card; a markdown file as its note
+#   ./drive.sh scan              the camera is one Scan text control and Close
+#   ./drive.sh clear             the × beside an area takes it off; the row still opens the picker
 #   ./drive.sh event            a tap on the hour grid makes a block you can see
 #   ./drive.sh settings         the Settings cards render, and two deleted ones stay gone
 #   ./drive.sh surface           name the surface actually on screen
@@ -1154,6 +1158,21 @@ w(d if isinstance(d, dict) else d[0])
 raise SystemExit(1)" "$1"
 }
 
+# The centre of a button's frame, by label: "x y".
+button_center() {
+  axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
+import json, sys
+want = sys.argv[1]
+d = json.load(sys.stdin)
+def w(n):
+    f = n.get('frame') or {}
+    if (n.get('AXLabel') or '') == want and n.get('type') == 'Button' and f.get('width'):
+        print(int(f['x'] + f['width'] / 2), int(f['y'] + f['height'] / 2)); raise SystemExit
+    for c in n.get('children') or []: w(c)
+w(d if isinstance(d, dict) else d[0])
+raise SystemExit(1)" "$1"
+}
+
 # The x of a button's frame, by label.
 button_x() {
   axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
@@ -2205,6 +2224,273 @@ cmd_under() {
 # saved filters. A workspace's lens is the same core path and is walked
 # by every check that boots into one.
 
+# FILES (owner, 2026-10-01: "files opened if they contain text, which is
+# edited as a note"). A file beside the box opens as a card that says what
+# it is, how big, and Open — until that day every file read "moved or
+# deleted", because the app took the file's fingerprint for its path. A
+# markdown file opens as the note it holds, in one action.
+cmd_files() {
+  local dir=$(dirname "$(box_db)") stamp=$(date +%H%M%S) pdf md rc=0
+  mkdir -p "$dir/files/check$stamp"
+  printf '%%PDF-1.4\n%%\xe2\xe3\xcf\xd3\n' > "$dir/files/check$stamp/Check $stamp.pdf"
+  printf '# Check %s\n\n- [ ] one\n' "$stamp" > "$dir/files/check$stamp/Note $stamp.md"
+  pdf=$(seed file "$dir/files/check$stamp/Check $stamp.pdf" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])') || return 1
+  md=$(seed file "$dir/files/check$stamp/Note $stamp.md" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])') || return 1
+  files_walk "$pdf" "$md" "$stamp" || rc=1
+  seed trash "$pdf" >/dev/null; seed trash "$md" >/dev/null
+  return $rc
+}
+
+files_walk() {
+  local pdf="$1" md="$2" stamp="$3" seen
+  cmd_boot today >/dev/null || { die "could not boot."; return 1 }
+  sim openurl "$UDID" "liv://entity/$pdf" >/dev/null 2>&1
+  perl -e 'select(undef,undef,undef,2.5)'
+  seen=$(scan 'def walk(n):
+    l = n.get("AXLabel") or ""
+    if l in ("PDF", "Open") or l.endswith(" bytes") or "moved" in l: print(l)
+    for c in n.get("children") or []: walk(c)' | sort -u | tr '\n' '|')
+  [[ "$seen" == *"PDF|"* && "$seen" == *"Open|"* && "$seen" == *" bytes|"* && "$seen" != *moved* ]] || {
+    die "a PDF beside the box did not open as its card: saw '${seen}'. It
+      should say PDF, its size and Open, and never 'moved or deleted'."
+    return 1
+  }
+  cmd_boot today >/dev/null || { die "could not boot again."; return 1 }
+  sim openurl "$UDID" "liv://entity/$md" >/dev/null 2>&1
+  perl -e 'select(undef,undef,undef,3.0)'
+  [[ "$(cmd_surface)" == "document" ]] || { die "the markdown file did not open."; return 1 }
+  local kind=$(seed cells "$md" | python3 -c 'import json,sys; print(next((c["value"] for c in json.load(sys.stdin) if c["word"] == "kind"), ""))')
+  [[ "$kind" == "Note" ]] || {
+    die "a markdown file opened and is still a '$kind', not a note. A file
+      that holds words is edited as a note (liv_file_into_note)."
+    return 1
+  }
+  say "ok    files: a PDF beside the box opens as PDF, its size and Open; a markdown file opens as its note"
+  cmd_boot today >/dev/null
+}
+
+# THE CAMERA READS (owner, 2026-10-01: "camera: scanning only"): one
+# control, Scan text, and the way out — no photo shutter, no tray.
+cmd_scan() {
+  cmd_boot today >/dev/null || { die "could not boot."; return 1 }
+  local x y
+  read x y <<< "$(button_center New)"
+  axe touch -x "$x" -y "$y" --down --up --delay 1.2 --udid "$UDID" >/dev/null 2>&1
+  perl -e 'select(undef,undef,undef,1.5)'
+  cmd_tap "Scan text" >/dev/null || { die "the + menu has no Scan text."; return 1 }
+  perl -e 'select(undef,undef,undef,1.8)'
+  local seen=$(scan 'def walk(n):
+    l = n.get("AXLabel") or ""
+    if n.get("type") == "Button" and l in ("Scan text", "Close", "Shutter", "Pick a photo", "Done"): print(l)
+    for c in n.get("children") or []: walk(c)' | sort -u | tr '\n' ' ')
+  [[ "$seen" == "Close Scan text " ]] || {
+    die "the scanner shows '${seen}'. It should show exactly Scan text and
+      Close: the photo shutter, its picker and Done went (owner, 2026-10-01)."
+    return 1
+  }
+  cmd_tap "Close" >/dev/null
+  perl -e 'select(undef,undef,undef,1.0)'
+  [[ "$(cmd_surface)" == "today" ]] || { die "Close did not put the scanner away."; return 1 }
+  say "ok    scan: the camera is one Scan text control and Close"
+}
+
+# THE PANEL FROM ANYWHERE, AND NOT WHILE WRITING (owner, 2026-10-01:
+# "whole area when keyboard is down and no scrolling as you swipe and when
+# panel is open"). Three things no other check drags for:
+#   - a sideways drag in the MIDDLE of a list opens the panel. Until
+#     2026-10-01 only the edges did: a class-name veto meant for text
+#     selection matched SwiftUI's List host (`…SelectionManagerBox…`);
+#   - the list under that drag stays where it was;
+#   - a note being edited refuses the drag, and takes it again once the
+#     keyboard is put away.
+cmd_swipe() {
+  local made=() id i stamp=$(date +%H%M%S)
+  for i in {01..12}; do id=$(seed new note "Swipe $stamp $i") || return 1; made+=$id; done
+  id=$(seed new task "Swipe $stamp task") || return 1; made+=$id
+  swipe_walk "$stamp"
+  local rc=$?
+  for id in $made; do seed trash "$id" >/dev/null; done
+  return $rc
+}
+
+# The y of each seeded row on screen, and the centre of the first.
+swipe_rows() {
+  STAMP="$1" scan 'import os
+def walk(n):
+    l = n.get("AXLabel") or ""
+    f = n.get("frame") or {}
+    if n.get("type") == "Button" and l.startswith("Swipe " + os.environ["STAMP"] + " "):
+        print(l.split(",")[0].replace(" ", "_") + "=" + str(int(f.get("y", 0))))
+    for c in n.get("children") or []: walk(c)' | sort
+}
+
+# The rows in BOTH readings that moved. More rows can enter the tree once
+# the panel is out, so the comparison is row by row, by name.
+swipe_moved() {
+  comm -12 <(print -r -- "$1" | cut -d= -f1 | sort) <(print -r -- "$2" | cut -d= -f1 | sort) \
+    | while read name; do
+        local a=$(print -r -- "$1" | grep "^$name=" | cut -d= -f2)
+        local b=$(print -r -- "$2" | grep "^$name=" | cut -d= -f2)
+        [[ "$a" == "$b" ]] || print -r -- "$name $a->$b"
+      done
+}
+
+swipe_first_row() {
+  STAMP="$1" scan 'import os
+def walk(n):
+    l = n.get("AXLabel") or ""
+    f = n.get("frame") or {}
+    if n.get("type") == "Button" and l.startswith("Swipe " + os.environ["STAMP"] + " ") and f.get("y", 0) > 100:
+        print(int(f["x"] + f["width"] / 2), int(f["y"] + f["height"] / 2))
+    for c in n.get("children") or []: walk(c)' | head -1
+}
+
+swipe_across() {
+  axe swipe --udid "$UDID" --start-x 100 --start-y 420 --end-x 330 --end-y 500 --duration 0.5 >/dev/null 2>&1
+  perl -e 'select(undef,undef,undef,2.0)'
+}
+
+# A ROW'S OWN SWIPE WINS ON THE ROW (review, 2026-10-02): a rightward drag
+# on a Tasks row shows Tonight · Tomorrow · Pick, and the panel stays shut;
+# the same drag from the screen's edge is the panel's.
+swipe_row() {
+  local y
+  cmd_boot tasks >/dev/null || { die "could not boot into Tasks."; return 1 }
+  # Any task row will do — the seeded one only makes sure there is one,
+  # and new tasks land at the foot of the list.
+  y=$(scan 'def walk(n):
+    f = n.get("frame") or {}
+    if (n.get("AXLabel") or "").startswith("Complete ") and 150 < f.get("y", 0) < 760:
+        print(int(f["y"] + f["height"] / 2))
+    for c in n.get("children") or []: walk(c)' | head -1)
+  [[ -n "$y" ]] || { die "no task row on screen in Tasks."; return 1 }
+  axe swipe --udid "$UDID" --start-x 150 --start-y "$y" --end-x 330 --end-y "$((y + 3))" --duration 0.5 >/dev/null 2>&1
+  perl -e 'select(undef,undef,undef,1.5)'
+  [[ "$(overlays)" != *library* ]] || {
+    die "a rightward drag on a Tasks row opened the panel; the row's own
+      Tonight · Tomorrow · Pick should have come out instead. Look at
+      PanelDrag's shouldRequireFailureOf."
+    return 1
+  }
+  [[ -n "$(scan 'def walk(n):
+    if n.get("type") == "Button" and n.get("AXLabel") == "Tonight": print("yes")
+    for c in n.get("children") or []: walk(c)')" ]] || {
+    die "a rightward drag on a Tasks row showed neither the panel nor the
+      row's Tonight action."
+    return 1
+  }
+  cmd_boot tasks >/dev/null || { die "could not boot into Tasks again."; return 1 }
+  axe swipe --udid "$UDID" --start-x 8 --start-y "$y" --end-x 300 --end-y "$((y + 3))" --duration 0.5 >/dev/null 2>&1
+  perl -e 'select(undef,undef,undef,1.5)'
+  [[ "$(overlays)" == *library* ]] || {
+    die "a drag from the screen's edge across a Tasks row did not open the
+      panel. The edge is the panel's (PanelDrag.atEdge)."
+    return 1
+  }
+}
+
+# THE × TAKES THE AREA OFF (owner, 2026-10-02: "i just want to be able to
+# remove an area from the area field... simple"). On a task's card the
+# Area row holding Work has an × where its chevron was; the rest of the
+# row still opens the picker. The CLI judges the cell, the screen the row.
+cmd_clear() {
+  local id
+  id=$(seed new task "Clear $(date +%H%M%S)" --area Work) || return 1
+  clear_walk "$id"
+  local rc=$?
+  seed trash "$id" >/dev/null
+  return $rc
+}
+
+clear_open() {
+  cmd_boot tasks >/dev/null || { die "could not boot into Tasks."; return 1 }
+  sim openurl "$UDID" "liv://entity/$1" >/dev/null 2>&1
+  perl -e 'select(undef,undef,undef,2.0)'
+}
+
+clear_walk() {
+  local id="$1"
+  clear_open "$id" || return 1
+  cmd_tap "Area, Work" >/dev/null || {
+    die "the task's card shows no Area, Work row for a task seeded under Work."
+    return 1
+  }
+  perl -e 'select(undef,undef,undef,1.2)'
+  tree | grep -q '"Search"' || {
+    die "a tap on the Area row (not its ×) did not open the Area picker."
+    return 1
+  }
+  clear_open "$id" || return 1
+  cmd_tap "Remove Area" >/dev/null || {
+    die "the Area row holding Work has no × (Detail.swift detailClear)."
+    return 1
+  }
+  perl -e 'select(undef,undef,undef,1.5)'
+  if seed cells "$id" | grep -q '"word": "area"'; then
+    die "tapped the × and the task is still filed under an area (liv cells)."
+    return 1
+  fi
+  if tree | grep -q '"Area, Work"\|"Remove Area"'; then
+    die "the area is gone from the box but the card still shows it."
+    return 1
+  fi
+  say "ok    clear: the × beside Work takes the area off (liv cells agrees) and the row reads just Area; a tap on the row opens the picker"
+  cmd_boot tasks >/dev/null
+}
+
+swipe_walk() {
+  local stamp="$1" before after x y
+  cmd_boot notes >/dev/null || { die "could not boot into Notes."; return 1 }
+  # Down the list a little, and let it come to rest: a list still coasting
+  # moves whatever the drag does.
+  axe swipe --udid "$UDID" --start-x 380 --start-y 650 --end-x 380 --end-y 450 --duration 1.0 >/dev/null 2>&1
+  perl -e 'select(undef,undef,undef,3.5)'
+  before=$(swipe_rows "$stamp")
+  [[ -n "$before" ]] || { die "the twelve seeded notes are not on the Notes list."; return 1 }
+  # Mostly sideways, drifting 80pt down, from the middle of the list.
+  swipe_across
+  [[ "$(overlays)" == *library* ]] || {
+    die "a sideways drag in the middle of the Notes list did not open the
+      panel. The panel opens from anywhere while nothing is being edited;
+      look at PanelDrag.startAllowed and DeskHost.claimPanel."
+    return 1
+  }
+  after=$(swipe_rows "$stamp")
+  local moved=$(swipe_moved "$before" "$after")
+  [[ -z "$moved" ]] || {
+    die "the list moved under the drag that opened the panel: ${moved//$'\n'/, }.
+      The scroll view's pan is meant to let go when the panel latches
+      (PanelPanRecognizer)."
+    return 1
+  }
+
+  cmd_boot notes >/dev/null || { die "could not boot into Notes again."; return 1 }
+  read x y <<< "$(swipe_first_row "$stamp")"
+  [[ -n "${y:-}" ]] || { die "no seeded note to open."; return 1 }
+  axe tap --udid "$UDID" -x "$x" -y "$y" >/dev/null 2>&1
+  perl -e 'select(undef,undef,undef,1.5)'
+  [[ "$(cmd_surface)" == "document" ]] || { die "the seeded note did not open."; return 1 }
+  swipe_across
+  [[ "$(overlays)" != *library* ]] || {
+    die "with a note being edited, a sideways drag opened the panel. It
+      must not while anything is being edited (owner, 2026-10-01)."
+    return 1
+  }
+  cmd_tap "Hide keyboard" >/dev/null || return 1
+  perl -e 'select(undef,undef,undef,0.8)'
+  swipe_across
+  [[ "$(overlays)" == *library* ]] || {
+    die "with the keyboard put away, a sideways drag on the note did not
+      open the panel."
+    return 1
+  }
+  swipe_row || return 1
+  say "ok    swipe: a drag mid-list opens the panel and the list stays put; a note being edited refuses it until the keyboard goes; a task row's own swipe wins mid-row, the edge still opens the panel"
+  # The panel is out over the note; a fresh launch is the one state the
+  # health check reads as one surface.
+  cmd_boot notes >/dev/null
+}
+
 # THE FILTER ROWS: one per property you can narrow by, its name at the
 # margin, a count on every chip — and what you picked lit IN its row.
 #
@@ -2235,6 +2521,9 @@ facets_walk() {
   # WAIT for the field, do not assume the sheet is up. Typing into a sheet
   # that has not arrived types into whatever has focus.
   wait_field || { die "the search sheet did not open."; return 1 }
+  # Focus comes after the cover's slide (LivMotion.coverSeconds), so the
+  # field exists a beat before it takes keys.
+  perl -e 'select(undef,undef,undef,0.8)'
   axe type "$word" --udid "$UDID" >/dev/null || { die "could not type into search."; return 1 }
   perl -e 'select(undef,undef,undef,2.5)'
   local chips
@@ -2441,6 +2730,11 @@ cmd_event() {
 
   local before after mid_x
   before=$(block_count)
+  # WHAT IT MAKES, IT THROWS AWAY. Every run used to leave its block on
+  # the day, and after a dozen runs there was no free hour left to tap
+  # (2026-10-01). The events in the box before, so the new one is known.
+  local events_before
+  events_before=$(seed list | awk '$2 == "event" {print $1}' | sort)
 
   mid_x=$(button_cx "Library") || { die "could not centre on the library door."; return 1 }
   mid_x=$(( mid_x + 120 ))   # past the hour-label lane, into the blocks
@@ -2481,6 +2775,11 @@ cmd_event() {
   perl -e 'select(undef,undef,undef,1.2)'
   after=$(block_count)
 
+  local made
+  for made in $(comm -13 <(print -r -- "$events_before") \
+      <(seed list | awk '$2 == "event" {print $1}' | sort)); do
+    seed trash "$made" >/dev/null
+  done
   (( after > before )) || {
     die "the timeline drew ${before} blocks before the tap and ${after} after.
       The event was made — the card rose — and the calendar cannot see it.
@@ -2805,6 +3104,10 @@ case "${1:-}" in
   desk)    cmd_desk    || exit 1 ;;
   under)   cmd_under   || exit 1 ;;
   facets)  cmd_facets  || exit 1 ;;
+  swipe)   cmd_swipe   || exit 1 ;;
+  files)   cmd_files   || exit 1 ;;
+  scan)    cmd_scan    || exit 1 ;;
+  clear)   cmd_clear   || exit 1 ;;
   event)   cmd_event    || exit 1 ;;
   settings) cmd_settings || exit 1 ;;
   cycles)  cmd_cycles  || exit 1 ;;
@@ -2818,5 +3121,5 @@ case "${1:-}" in
   # `goto` — everything added after it (tour, panel, bar, workspace,
   # history, spool, cycles, quiet) was documented at the top of the file
   # and invisible to anyone who ran the script for help.
-  *) sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) awk 'NR > 1 && !/^#/ { exit } NR > 1' "${0:t}" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

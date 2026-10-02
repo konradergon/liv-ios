@@ -100,17 +100,68 @@ pub unsafe extern "C" fn liv_write_body(
         Ok(i) => i,
         Err(e) => return e,
     };
-    let raw = match text(spans_json, LIV_ERR_ARG) {
+    let spans = match spans_arg(spans_json) {
         Ok(s) => s,
         Err(e) => return e,
     };
-    let Some(spans) = spans::from_json(raw) else { return LIV_ERR_ARG };
-
     match with_engine(path, |e| match e.set_content(id, spans, base, now_ms) {
         Ok(print) => Ok(json!({ "print": print })),
-        Err(ContentError::Stale) => Err(LIV_ERR_STALE),
-        Err(ContentError::Invalid) => Err(LIV_ERR_REFUSED),
-        Err(ContentError::Write(_)) => Err(LIV_ERR_READ),
+        Err(err) => Err(content_code(err)),
+    }) {
+        Ok(v) => deliver(out, &v),
+        Err(e) => e,
+    }
+}
+
+/// What a body write's refusal is called on the wire — one mapping for
+/// every verb that takes spans.
+fn content_code(e: ContentError) -> i32 {
+    match e {
+        ContentError::Stale => LIV_ERR_STALE,
+        ContentError::Invalid => LIV_ERR_REFUSED,
+        ContentError::Write(_) => LIV_ERR_READ,
+    }
+}
+
+/// Span JSON, or `LIV_ERR_ARG` — read exactly as `liv_write_body` reads it.
+fn spans_arg(p: *const c_char) -> Result<Vec<liv_engine::Span>, i32> {
+    spans::from_json(text(p, LIV_ERR_ARG)?).ok_or(LIV_ERR_ARG)
+}
+
+/// Make a note with its name and its words in ONE action. `{"id":hex}`.
+///
+/// What a text file handed to the phone becomes; `liv_make` and then
+/// `liv_write_body` would be two actions, and one undo would leave an
+/// empty note behind. `name` may be null, and a blank one writes no name;
+/// empty spans write no body. `LIV_ERR_REFUSED` for a link to nothing,
+/// with nothing written.
+///
+/// # Safety
+/// `path` and `spans` valid C strings; `name` a valid C string or null;
+/// `out` as for `liv_read_body`.
+#[no_mangle]
+pub unsafe extern "C" fn liv_make_note(
+    path: *const c_char,
+    name: *const c_char,
+    spans_json: *const c_char,
+    now_ms: u64,
+    out: *mut *mut c_char,
+) -> i32 {
+    let name = if name.is_null() {
+        None
+    } else {
+        match text(name, LIV_ERR_ARG) {
+            Ok(s) => Some(s),
+            Err(e) => return e,
+        }
+    };
+    let spans = match spans_arg(spans_json) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match with_engine(path, |e| match e.make_note(name, spans, now_ms) {
+        Ok(id) => Ok(json!({ "id": id.hex() })),
+        Err(err) => Err(content_code(err)),
     }) {
         Ok(v) => deliver(out, &v),
         Err(e) => e,
@@ -294,6 +345,10 @@ pub unsafe extern "C" fn liv_rename_value(
 /// where the user put it. An unreadable path is `LIV_ERR_REFUSED`, never
 /// a phantom entity with a hash of nothing.
 ///
+/// A file inside the box's folder is remembered RELATIVE to it, so a
+/// moved box or a reinstalled app still finds it; anywhere else, by its
+/// whole path.
+///
 /// # Safety
 /// `path` and `file` must be valid C strings.
 #[no_mangle]
@@ -319,14 +374,17 @@ pub unsafe extern "C" fn liv_add_file(
 
 /// Re-hash what a file points at on this device.
 ///
-/// `{"state":"unchanged"|"changed"|"broken","path":…}`. A changed hash IS
-/// the integration — it is how Liv learns Word saved the file — and a
-/// vanished path is `broken`, which leaves the stored hash alone: a file
-/// on an unplugged drive is not a file whose contents changed.
+/// `{"state":"unchanged"|"changed"|"broken","path":…,"bytes":N}`. A
+/// changed hash IS the integration — it is how Liv learns Word saved the
+/// file — and a vanished path is `broken`, which leaves the stored hash
+/// alone: a file on an unplugged drive is not a file whose contents
+/// changed.
 ///
-/// The path is included because a shell showing a broken reference wants
-/// to say WHERE it was looking, and `null` is the honest answer for a file
-/// that arrived by sync and has no copy here.
+/// **This is where a shell learns where a file is.** `path` is always
+/// whole, joined to the box's folder as it is now — so it is the path to
+/// open — and `null` for a file that arrived by sync and has no copy
+/// here. A broken reference still names where it looked. `bytes` is the
+/// file's size, and `null` when it is broken.
 ///
 /// # Safety
 /// As `liv_read_body`.
@@ -344,6 +402,10 @@ pub unsafe extern "C" fn liv_resync_file(
     match with_engine(path, |e| {
         let state = e.resync_file(id, now_ms).map_err(|_| LIV_ERR_READ)?;
         let here = e.path_of(id).map_err(|_| LIV_ERR_READ)?;
+        let bytes = match (&state, &here) {
+            (Resync::Broken, _) | (_, None) => None,
+            (_, Some(p)) => std::fs::metadata(p).ok().map(|m| m.len()),
+        };
         Ok(json!({
             "state": match state {
                 Resync::Unchanged => "unchanged",
@@ -351,9 +413,67 @@ pub unsafe extern "C" fn liv_resync_file(
                 Resync::Broken => "broken",
             },
             "path": here,
+            "bytes": bytes,
         }))
     }) {
         Ok(v) => deliver(out, &v),
+        Err(e) => e,
+    }
+}
+
+/// The words in a file, and what a note made of it is called:
+/// `{"name":…,"text":…}`, `text` null when the file does not hold text.
+///
+/// **Whether it holds text is the engine's call** (`text_of`: UTF-8, no
+/// NUL, at most half a megabyte) — the owner's rule of 2026-10-01 is that
+/// a file is opened as a note when it holds text, and a shell asks rather
+/// than decides. No box: it reads one file and writes nothing. A path
+/// that will not read is `LIV_ERR_REFUSED`.
+///
+/// # Safety
+/// `file` a valid C string; `out` as for `liv_read_body`.
+#[no_mangle]
+pub unsafe extern "C" fn liv_file_text(file: *const c_char, out: *mut *mut c_char) -> i32 {
+    let file = match text(file, LIV_ERR_ARG) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match liv_engine::text_of(file) {
+        Ok(words) => deliver(out, &json!({ "name": liv_engine::note_name(file), "text": words })),
+        Err(_) => LIV_ERR_REFUSED,
+    }
+}
+
+/// Turn a file the box holds into a note of these spans, in ONE action.
+///
+/// It keeps its id, so its links and cells stay; it loses its hash and
+/// its format, and an extension off its name. The file on disk is never
+/// written, and one `liv_undo` makes it the file it was. The spans are
+/// the shell's reading of `liv_file_text`'s words — the editor is the one
+/// parser of what a line means.
+///
+/// `LIV_ERR_REFUSED`, with nothing written, for something that is not a
+/// file, a file in the trash, or a link to nothing.
+///
+/// # Safety
+/// `path`, `id` and `spans` valid C strings.
+#[no_mangle]
+pub unsafe extern "C" fn liv_file_into_note(
+    path: *const c_char,
+    id: *const c_char,
+    spans_json: *const c_char,
+    now_ms: u64,
+) -> i32 {
+    let id = match id_arg(id) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
+    let spans = match spans_arg(spans_json) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match with_engine(path, |e| e.file_into_note(id, spans, now_ms).map_err(content_code)) {
+        Ok(()) => LIV_OK,
         Err(e) => e,
     }
 }

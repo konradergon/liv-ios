@@ -25,6 +25,7 @@ struct SettingsSheet: View {
     @ObservedObject private var notify = Notify.shared
     /// Dark, light, or follow the system — device state, never a cell.
     @AppStorage(LivAppearance.key) private var appearance = LivAppearance.dark.rawValue
+    @AppStorage(LivHeadingMarks.key) private var headingMarks = true
 
     /// THE LOG'S OWN NOTICES, and NOT the vault's — see `logRows`.
     ///
@@ -53,7 +54,18 @@ struct SettingsSheet: View {
                 LivSheetTitle("Settings")
                 // What a person actually came here to change, first.
                 LivCard(label: "Appearance", labelStyle: .sheet) {
-                    appearanceRow.padding(12)
+                    VStack(spacing: 0) {
+                        appearanceRow
+                        Toggle(isOn: $headingMarks) {
+                            Text("Show # in headings")
+                                .font(.system(size: LivType.body))
+                                .foregroundStyle(LivTheme.text)
+                        }
+                        .toggleStyle(LivSwitchStyle())
+                        .frame(minHeight: 44)
+                        .padding(.top, 8)
+                    }
+                    .padding(12)
                 }
                 if box.snap?.assist != nil {
                     LivCard(label: "Suggestions", labelStyle: .sheet) {

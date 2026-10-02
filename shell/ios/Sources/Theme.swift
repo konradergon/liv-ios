@@ -187,12 +187,17 @@ enum LivType {
         static let codeInline: CGFloat = 16
         /// How far a code block's tint reaches past its words.
         static let codePad: CGFloat = 6
-        /// THE SIX HEADINGS, `#` to `######`: each a step smaller than the
+        /// A quote's bar, and where the quote's words start right of it.
+        static let quoteBar: CGFloat = 3
+        static let quoteIndent: CGFloat = 16
+        /// THE SIX HEADINGS, `#` to `######`: each 2.5pt smaller than the
         /// one above, the sixth at the body's own size and told apart by
         /// weight (owner, 2026-10-01). Seven `#` is not a heading and reads
         /// as the characters it is. Until then there were three sizes, and
-        /// H3 to H6 were all body-size.
-        static let headings: [CGFloat] = [28, 26, 24, 22, 20, 18]
+        /// H3 to H6 were all body-size. The steps were 2pt and the largest
+        /// 28 until the owner asked for both bigger (2026-10-02); 3pt steps
+        /// put the largest over the note's own title (32), so 2.5.
+        static let headings: [CGFloat] = [30.5, 28, 25.5, 23, 20.5, 18]
         /// A heading's line pitch, as a multiple of its size — what a
         /// heading that wraps keeps between its lines.
         static let headingPitch: CGFloat = 1.25
@@ -255,11 +260,15 @@ enum LivDay {
     static let gridDisc: CGFloat = 28
 }
 
-/// Row metrics. A list row was 46pt when its text was 11–13; the type
-/// scale went up on 2026-08-10 and the rows had to go with it, or the
-/// bigger text would simply be more cramped in the same box (owner:
-/// "UI in the property panel is cramped towards the top when almost half
-/// of the panel is empty").
+/// THE SCANNER'S CONTROLS (Camera.swift): one round shutter and the small
+/// round buttons over the viewfinder.
+enum LivCamera {
+    static let shutter: CGFloat = 62
+    static let shutterCore: CGFloat = 50
+    static let shutterRing: CGFloat = 3
+    static let control: CGFloat = 32
+}
+
 /// THE LEFT PANEL, measured off the owner's own reference.
 ///
 /// Every number here was read out of `~/Desktop/Throwaway/ui-inspo/left-panel.MOV`
@@ -452,6 +461,11 @@ enum LivFacets {
     static let name: CGFloat = 84
 }
 
+/// Row metrics. A list row was 46pt when its text was 11–13; the type
+/// scale went up on 2026-08-10 and the rows had to go with it, or the
+/// bigger text would simply be more cramped in the same box (owner:
+/// "UI in the property panel is cramped towards the top when almost half
+/// of the panel is empty").
 enum LivRow {
     /// THE OLD ROW HEIGHT, and what still stands on it: the controls
     /// and sheet rows that are NOT card rows — the tab-switcher row, the
@@ -687,6 +701,10 @@ enum LivPanelFoot {
 /// the first card, which stands 18 below it; a value's glyph is 16 and sits
 /// 6 before its words; the sheet ends 24 under its footnote.
 enum LivDetail {
+    /// The × that takes a value off a row (`detailClear`): the glyph, and
+    /// the square a thumb hits, centred where the chevron stands.
+    static let clear: CGFloat = 17
+    static let clearTouch: CGFloat = 44
     static let headerBottom: CGFloat = 4
     static let firstCard: CGFloat = 18
     static let valueGlyph: CGFloat = 16
@@ -897,6 +915,11 @@ enum LivMotion {
     /// spring read about the same, which is to say too fast to have any
     /// weight; a spring wants a little longer to show its shape.
     static let navSeconds: Double = 0.30
+
+    /// A system cover's own slide in (`fullScreenCover`). Focus asked for
+    /// before it ends is measured against a frame still moving, and the
+    /// keyboard can come up over the field it was asked for.
+    static let coverSeconds: Double = 0.5
 
     /// HOW LONG AN OFFER STAYS at the foot — Undo on the acknowledgment
     /// chip, and the pill a swiped-away card leaves. Long enough to

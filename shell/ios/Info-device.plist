@@ -59,7 +59,7 @@
 		<false/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>Liv photographs straight into your box.</string>
+	<string>Liv reads the text on a page you scan.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Liv saves images you export from your box to your photo library.</string>
 </dict>

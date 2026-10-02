@@ -41,6 +41,9 @@ extension NSAttributedString.Key {
     /// On every line of a code block, its ``` lines included. Value:
     /// NSNumber(true). The layout manager tints those lines full width.
     static let livCode = NSAttributedString.Key("liv.code")
+    /// On every line of a quote or a callout, its newline included, so a
+    /// run of them is one bar. Value: NSNumber(true).
+    static let livQuote = NSAttributedString.Key("liv.quote")
 }
 
 // MARK: - the bridge
@@ -79,6 +82,16 @@ final class EditorBridge: ObservableObject {
     func scroll(to location: Int) { coordinator?.scroll(to: location) }
 }
 
+// MARK: - the # setting
+
+/// Whether a heading's `#` marks show on every line, dimmed, or only on the
+/// caret's (owner, 2026-10-01: "make # visible, at least by default" — a
+/// setting, on unless turned off). Device state, like the appearance.
+enum LivHeadingMarks {
+    static let key = "editor.headingMarks"
+    static var shown: Bool { UserDefaults.standard.object(forKey: key) as? Bool ?? true }
+}
+
 // MARK: - fonts
 
 private enum EditorFont {
@@ -109,6 +122,14 @@ private enum EditorFont {
     /// A heading's own paragraph: its pitch, and air under it. The air
     /// ABOVE is set per line (none on the note's first line).
     static func headingStyle(_ level: Int, first: Bool) -> NSParagraphStyle {
+        // THE SMALLEST IS A BOLD LINE (owner, 2026-10-01: "identical to
+        // regular bold text") — the body's pitch and no air of its own;
+        // its font is already the body's bold.
+        if level >= LivType.Editor.headings.count {
+            let p = NSMutableParagraphStyle()
+            p.lineSpacing = bodySpacing
+            return p
+        }
         let font = heading(level)
         let pitch = (font.pointSize * LivType.Editor.headingPitch).rounded()
         let p = NSMutableParagraphStyle()
@@ -235,7 +256,7 @@ enum MarkStyler {
             } else {
                 style(
                     line: n.substring(with: lineRange), at: lineRange.location,
-                    storage: storage,
+                    whole: wholeLine, storage: storage,
                     revealed: MarkStyler.reveals(revealing, line: lineRange))
             }
         }
@@ -299,7 +320,8 @@ enum MarkStyler {
     }
 
     private static func style(
-        line: String, at base: Int, storage: NSTextStorage, revealed: Bool = false
+        line: String, at base: Int, whole: NSRange, storage: NSTextStorage,
+        revealed: Bool = false
     ) {
         let shape = MarkScan.shape(line)
         let lineLen = (line as NSString).length
@@ -480,7 +502,15 @@ enum MarkStyler {
                 range: abs(NSRange(location: 0, length: lineLen)))
             // The hash wears the heading's own font, so it sits on the
             // same baseline at the same size as the words beside it.
-            markBlock(contentFont)
+            // Shown on every line when the setting says so: dimmed, never
+            // hidden, so nothing shifts when the caret comes onto it.
+            if LivHeadingMarks.shown {
+                dim(
+                    NSRange(location: shape.indent, length: max(0, shape.marker.length - shape.indent)),
+                    font: contentFont)
+            } else {
+                markBlock(contentFont)
+            }
         case .bullet:
             dim(shape.marker)
             // The dash's ink goes clear and a point is drawn in its
@@ -543,6 +573,14 @@ enum MarkStyler {
                 }
             }
         case .quote, .callout:
+            // A BAR AT THE MARGIN and the words right of it — the layout
+            // manager draws the bar down every `.livQuote` line.
+            let indent = NSMutableParagraphStyle()
+            indent.lineSpacing = EditorFont.bodySpacing
+            indent.firstLineHeadIndent = LivType.Editor.quoteIndent
+            indent.headIndent = LivType.Editor.quoteIndent
+            storage.addAttributes(
+                [.paragraphStyle: indent, .livQuote: NSNumber(value: true)], range: whole)
             markBlock()
             let content = NSRange(
                 location: shape.marker.length, length: lineLen - shape.marker.length)
@@ -712,6 +750,11 @@ func livStylerSelfCheck() -> [String] {
     func check(_ label: String, _ ok: Bool, _ detail: @autoclosure () -> String = "") {
         if !ok { failures.append("FAIL \(label) \(detail())") }
     }
+    // The checks below are about HIDING a heading's marks, so they run with
+    // the `#` setting off whatever this simulator has, and put it back.
+    let marks = UserDefaults.standard.object(forKey: LivHeadingMarks.key)
+    UserDefaults.standard.set(false, forKey: LivHeadingMarks.key)
+    defer { UserDefaults.standard.set(marks, forKey: LivHeadingMarks.key) }
     let text = "a\n> quote\n```swift\n# no\n```\n# After **b** and `c`" as NSString
     let storage = NSTextStorage(string: text as String)
     let layout = LivLayoutManager()
@@ -760,6 +803,30 @@ func livStylerSelfCheck() -> [String] {
     }
     check("no tint on the heading after a block", tinted.isEmpty, "\(tinted) heading \(headingLine)")
 
+    // THE # SETTING ON: a heading's marks keep their glyphs and ink off
+    // the caret's line too.
+    UserDefaults.standard.set(true, forKey: LivHeadingMarks.key)
+    let shownText = "a\n## Shown" as NSString
+    let shownStore = NSTextStorage(string: shownText as String)
+    MarkStyler.apply(to: shownStore, in: NSRange(location: 0, length: shownText.length))
+    let hash = shownText.range(of: "##").location
+    check(
+        "with the setting on, # is not hidden",
+        shownStore.attribute(.livHidden, at: hash, effectiveRange: nil) == nil
+            && (shownStore.attribute(.foregroundColor, at: hash, effectiveRange: nil) as? UIColor)
+                != UIColor.clear)
+    UserDefaults.standard.set(false, forKey: LivHeadingMarks.key)
+
+    // THE SMALLEST HEADING IS A BOLD LINE: the body's pitch, no air.
+    let six = EditorFont.headingStyle(LivType.Editor.headings.count, first: false)
+    check(
+        "###### has no air of its own",
+        six.paragraphSpacingBefore == 0 && six.paragraphSpacing == 0
+            && abs(six.lineSpacing - EditorFont.bodySpacing) < 0.01)
+    check(
+        "###### is the body's bold",
+        EditorFont.heading(6) == EditorFont.bolded(EditorFont.body))
+
     // A WEB LINK carries its address for the tap — on its words, and
     // nowhere else.
     let webText = "see https://x.io and [Liv](https://liv.app)" as NSString
@@ -770,6 +837,28 @@ func livStylerSelfCheck() -> [String] {
     check("a link's words open its address", address(webText.range(of: "Liv]").location) == "https://liv.app")
     check("a link's bracket does not", address(webText.range(of: "[Liv").location) == nil)
     check("nor do the words around it", address(webText.range(of: "and").location) == nil)
+
+    // A QUOTE WEARS A BAR (2026-10-01): its lines — newlines included, so
+    // a run of them is one bar — carry `.livQuote`, and its words start
+    // right of the bar.
+    let quoteText = "> one\n> two\nafter" as NSString
+    let quote = NSTextStorage(string: quoteText as String)
+    let ql = LivLayoutManager()
+    ql.delegate = ql
+    let qc = NSTextContainer(size: CGSize(width: 360, height: 10_000))
+    quote.addLayoutManager(ql)
+    ql.addTextContainer(qc)
+    MarkStyler.apply(to: quote, in: NSRange(location: 0, length: quoteText.length))
+    ql.ensureLayout(for: qc)
+    var run = NSRange(location: 0, length: 0)
+    let barred = quote.attribute(.livQuote, at: 0, longestEffectiveRange: &run, in: NSRange(location: 0, length: quoteText.length)) != nil
+    check("two quote lines are one bar", barred && run.length == quoteText.range(of: "after").location, "\(run)")
+    check("the line after is no quote", quote.attribute(.livQuote, at: quoteText.range(of: "after").location, effectiveRange: nil) == nil)
+    let word = ql.glyphIndexForCharacter(at: quoteText.range(of: "one").location)
+    check(
+        "a quote's words start right of the bar",
+        ql.location(forGlyphAt: word).x >= LivType.Editor.quoteIndent - 0.5,
+        "\(ql.location(forGlyphAt: word).x)")
     // NOTHING MOVES WHEN THE CARET LEAVES: the heading's line keeps its
     // place and its air whether its `#` shows or not.
     check(
@@ -842,11 +931,38 @@ final class LivLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     }
 
     /// A CODE BLOCK is tinted the width of the page, line by line, so it
-    /// reads as one piece however its lines wrap.
+    /// reads as one piece however its lines wrap. A QUOTE gets a bar down
+    /// its margin, one piece for a run of quote lines.
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
         guard let storage = textStorage, let container = textContainers.first else { return }
         let chars = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+        storage.enumerateAttribute(.livQuote, in: chars) { value, range, _ in
+            guard value != nil else { return }
+            // The WHOLE run, not the part being redrawn: a redraw that cuts
+            // a quote in two would otherwise round both pieces' ends.
+            var whole = range
+            storage.attribute(
+                .livQuote, at: range.location, longestEffectiveRange: &whole,
+                in: NSRange(location: 0, length: storage.length))
+            let glyphs = glyphRange(forCharacterRange: whole, actualCharacterRange: nil)
+            var bar = CGRect.null
+            enumerateLineFragments(forGlyphRange: glyphs) { line, used, _, _, _ in
+                // To the bottom of the words, not of the line's pitch, so
+                // the bar ends where the quote does.
+                bar = bar.union(
+                    CGRect(x: line.minX, y: line.minY, width: 1, height: used.maxY - line.minY))
+            }
+            guard !bar.isNull else { return }
+            LivInk.text3.setFill()
+            UIBezierPath(
+                roundedRect: CGRect(
+                    x: origin.x + container.lineFragmentPadding,
+                    y: origin.y + bar.minY,
+                    width: LivType.Editor.quoteBar, height: bar.height),
+                cornerRadius: LivType.Editor.quoteBar / 2
+            ).fill()
+        }
         LivInk.panel2.setFill()
         storage.enumerateAttribute(.livCode, in: chars) { value, range, _ in
             guard (value as? NSNumber)?.boolValue == true else { return }
@@ -1349,6 +1465,8 @@ struct MarkdownEditor: UIViewRepresentable {
     /// Whose caret to remember (LivCaret). 0 for a record's notes, which
     /// live inside a card that is not torn down by navigation.
     var note: LivEntityID = .absent
+    /// `LivHeadingMarks` as the note last drew it; a change restyles it.
+    var headingMarks: Bool = LivHeadingMarks.shown
 
     func makeUIView(context: Context) -> MarkdownTextView {
         let view = MarkdownTextView(showsTitle: showsTitle)
@@ -1363,6 +1481,10 @@ struct MarkdownEditor: UIViewRepresentable {
     func updateUIView(_ view: MarkdownTextView, context: Context) {
         context.coordinator.parent = self
         view.isEditable = editable
+        if context.coordinator.headingMarks != headingMarks {
+            context.coordinator.headingMarks = headingMarks
+            context.coordinator.restyleAll()
+        }
         if view.showsTitle {
             view.titleView.isEditable = editable
             if view.titleView.text != title {
@@ -1493,6 +1615,7 @@ struct MarkdownEditor: UIViewRepresentable {
         /// The `imposed` count this coordinator has already put into the
         /// view, so an imposition is applied once and typing is free.
         var appliedImposed = 0
+        var headingMarks = LivHeadingMarks.shown
 
         init(_ parent: MarkdownEditor) { self.parent = parent }
 
@@ -1561,6 +1684,15 @@ struct MarkdownEditor: UIViewRepresentable {
         /// markdown. nil = none (no caret, or the editor is not first
         /// responder), and then the whole note reads as what it means.
         private var revealedRule: NSRange?
+
+        /// The whole note again — a setting that changes how it reads.
+        func restyleAll() {
+            guard let view else { return }
+            let n = (view.text as NSString).length
+            MarkStyler.apply(
+                to: view.textStorage, in: NSRange(location: 0, length: n),
+                revealing: revealedRule)
+        }
 
         /// Reveal follows the caret. It used to follow it only onto a
         /// DIVIDER, because the divider was the only thing that had a

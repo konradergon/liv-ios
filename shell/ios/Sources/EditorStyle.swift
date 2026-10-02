@@ -58,6 +58,9 @@ enum InlineRun: Equatable {
 }
 
 enum MarkScan {
+    /// `#` to `######`. Seven is not a heading; it reads as what it is.
+    static let headingLevels = 6
+
     /// The block shape of one line (the line string, no newline).
     static func shape(_ line: String) -> LineShape {
         let u = Array(line.utf16)
@@ -84,7 +87,7 @@ enum MarkScan {
             var j = i
             while j < u.count, u[j] == 0x23 { j += 1 }
             let level = j - i
-            if level <= 6, j < u.count, u[j] == 0x20 {
+            if level <= headingLevels, j < u.count, u[j] == 0x20 {
                 return LineShape(
                     block: .heading(level), indent: indent,
                     marker: NSRange(location: 0, length: j + 1), box: nil)
@@ -268,6 +271,16 @@ enum MarkScan {
                 i = close + 1
                 continue
             }
+            // _italic_, __bold__, ___both___ — the same marks as the stars,
+            // but only at a word's edges, so a snake_case_name stays words.
+            if c == 0x5F, let (n, close) = underscored(u, at: i) {
+                let content = NSRange(location: i + n, length: close - i - n)
+                out.append(.marker(NSRange(location: i, length: n)))
+                out.append(n == 3 ? .boldItalic(content) : n == 2 ? .bold(content) : .italic(content))
+                out.append(.marker(NSRange(location: close, length: n)))
+                i = close + n
+                continue
+            }
             // ~~strike~~
             if c == 0x7E, i + 1 < u.count, u[i + 1] == 0x7E,
                 let close = find([0x7E, 0x7E], from: i + 2), close > i + 2
@@ -281,6 +294,44 @@ enum MarkScan {
             i += 1
         }
         return out
+    }
+}
+
+// MARK: - underscores
+
+extension MarkScan {
+    /// A letter or digit, in any script: what an underscore may not touch
+    /// from outside if it is to open or close a run.
+    static func isWordChar(_ c: UInt16) -> Bool {
+        c >= 0x80 || (0x30...0x39).contains(c) || (0x41...0x5A).contains(c)
+            || (0x61...0x7A).contains(c)
+    }
+
+    /// An underscore run opening at `i` — three, two or one, the longest
+    /// that closes — and where its closing run starts. It opens only after
+    /// a non-word character and before a non-space, and closes only after
+    /// a non-space and before a non-word character: CommonMark's rule, in
+    /// short, so `snake_case_name` opens nothing.
+    static func underscored(_ u: [UInt16], at i: Int) -> (Int, Int)? {
+        if i > 0, isWordChar(u[i - 1]) || u[i - 1] == 0x5F { return nil }
+        for n in [3, 2, 1] {
+            guard i + n < u.count, (0..<n).allSatisfy({ u[i + $0] == 0x5F }) else { continue }
+            let first = u[i + n]
+            if first == 0x20 || first == 0x09 || first == 0x5F { continue }
+            var j = i + n + 1
+            while j + n <= u.count {
+                let run = (0..<n).allSatisfy { u[j + $0] == 0x5F }
+                let before = u[j - 1]
+                let after: UInt16? = j + n < u.count ? u[j + n] : nil
+                if run, before != 0x20, before != 0x09, before != 0x5F,
+                    after.map({ !isWordChar($0) && $0 != 0x5F }) ?? true
+                {
+                    return (n, j)
+                }
+                j += 1
+            }
+        }
+        return nil
     }
 }
 
@@ -491,7 +542,7 @@ enum EditOps {
                 location: selection.location + 1 + (continuation as NSString).length, length: 0))
     }
 
-    /// The block verbs (style keyboard): heading cycles ∅→#→##→###→∅;
+    /// The block verbs (style keyboard): heading cycles ∅→#→…→######→∅;
     /// bullet/ordered/task/quote toggle. Applies to every line the
     /// selection touches; the selection comes back covering those lines.
     static func setBlock(_ text: String, selection: NSRange, verb: BlockVerb) -> EditResult {
@@ -548,7 +599,14 @@ enum EditOps {
             switch verb {
             case .headingCycle:
                 let next: Int
-                if case .heading(let h) = shape.block { next = h >= 3 ? 0 : h + 1 } else { next = 1 }
+                // Through all six, then off (owner, 2026-10-02). It
+                // stopped at `###` since the editor began, when three
+                // sizes were all there were.
+                if case .heading(let h) = shape.block {
+                    next = h >= MarkScan.headingLevels ? 0 : h + 1
+                } else {
+                    next = 1
+                }
                 replaced.append(
                     pad + (next == 0 ? stripped : String(repeating: "#", count: next) + " " + stripped))
             case .bullet:
@@ -971,8 +1029,14 @@ func livEditorSelfCheck() -> [String] {
     check("cycle to h1", b1.text == "# title", b1.text)
     let b2 = EditOps.setBlock(b1.text, selection: NSRange(location: 0, length: 0), verb: .headingCycle)
     check("cycle to h2", b2.text == "## title")
+    // ALL SIX, then off (owner, 2026-10-02: "heading button still only
+    // cycles three, not six").
     let b3 = EditOps.setBlock("### t", selection: NSRange(location: 0, length: 0), verb: .headingCycle)
-    check("cycle off after h3", b3.text == "t")
+    check("cycle on past h3", b3.text == "#### t", b3.text)
+    let b3b = EditOps.setBlock("##### t", selection: NSRange(location: 0, length: 0), verb: .headingCycle)
+    check("cycle to h6", b3b.text == "###### t", b3b.text)
+    let b3c = EditOps.setBlock("###### t", selection: NSRange(location: 0, length: 0), verb: .headingCycle)
+    check("cycle off after h6", b3c.text == "t", b3c.text)
     let b4 = EditOps.setBlock("a\nb", selection: NSRange(location: 0, length: 3), verb: .task)
     check("two lines become tasks", b4.text == "- [ ] a\n- [ ] b", b4.text)
     let b5 = EditOps.setBlock(b4.text, selection: b4.selection, verb: .task)
@@ -1264,6 +1328,20 @@ func livEditorSelfCheck() -> [String] {
         "a bare www opens on https",
         MarkScan.webAddress("www.liv.app") == "https://www.liv.app"
             && MarkScan.webAddress("http://x.io") == "http://x.io")
+    // UNDERSCORES (2026-10-01): `_x_` is italic and `__x__` bold, but only
+    // at a word's edges — a snake_case_name stays as typed.
+    check("_x_ is italic", MarkScan.inline("a _b c_ d", from: 0).contains(.italic(NSRange(location: 3, length: 3))))
+    check("__x__ is bold", MarkScan.inline("a __b__ c", from: 0).contains(.bold(NSRange(location: 4, length: 1))))
+    check(
+        "___x___ is both",
+        MarkScan.inline("___b___", from: 0).contains(.boldItalic(NSRange(location: 3, length: 1))))
+    check("snake_case is words", MarkScan.inline("a snake_case_name", from: 0).isEmpty)
+    check("an underscore before a space opens nothing", MarkScan.inline("a _ b_", from: 0).isEmpty)
+    check(
+        "an underscore run is stored as its mark",
+        SpanText.textToSpans("a _b_ c")
+            == [.text("a ", marks: 0), .text("b", marks: 2), .text(" c", marks: 0)],
+        "\(SpanText.textToSpans("a _b_ c"))")
     check(
         "the codec stores a block as code",
         SpanText.textToSpans("```\n# x\n```") == [.brk(.code(lang: nil)), .text("# x", marks: 0)],

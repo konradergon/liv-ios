@@ -281,7 +281,7 @@ impl Engine {
     }
 
     /// The live dots of one cell — what a write has to name to replace.
-    fn dots_of(&self, entity: EntityId, prop: EntityId) -> Result<Vec<Dot>, LogError> {
+    pub(crate) fn dots_of(&self, entity: EntityId, prop: EntityId) -> Result<Vec<Dot>, LogError> {
         Ok(self.cell(entity, prop)?.into_iter().map(|(d, _)| d).collect())
     }
 

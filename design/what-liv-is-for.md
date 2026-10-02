@@ -37,7 +37,7 @@ for tasks. You never design a system. You use one. The one thing you
 name yourself is the areas of your life — the few words that are
 genuinely yours — and only when you first file something.
 
-**It catches anything in two seconds.** Type it, photograph it, share it
+**It catches anything in two seconds.** Type it, scan it, share it
 from another app, mark it a task — no folder to pick, no name to invent,
 no form. If you can start it, it's saved.
 

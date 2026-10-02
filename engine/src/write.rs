@@ -300,17 +300,21 @@ impl Engine {
         prop: EntityId,
         now_ms: u64,
     ) -> Result<Option<Dot>, WriteError> {
+        let Some(op) = self.unset_op(entity, prop)? else { return Ok(None) };
+        Ok(Some(self.commit(vec![op], action::SET, Author::User, now_ms)?))
+    }
+
+    /// The op that empties a cell, or `None` when it is empty already —
+    /// for a verb that empties a cell as one part of a bigger action.
+    ///
+    /// The value is a placeholder: retiring the live dots is the whole of
+    /// it, and undo reads back what they held from the log.
+    pub(crate) fn unset_op(&self, entity: EntityId, prop: EntityId) -> Result<Option<Op>, LogError> {
         let replaces: Vec<Dot> = self.cell(entity, prop)?.into_iter().map(|(d, _)| d).collect();
         if replaces.is_empty() {
             return Ok(None);
         }
-        let ops = vec![Op::RemoveFromSet {
-            entity,
-            prop,
-            value: Value::Text(String::new()),
-            replaces,
-        }];
-        Ok(Some(self.commit(ops, action::SET, Author::User, now_ms)?))
+        Ok(Some(Op::RemoveFromSet { entity, prop, value: Value::Text(String::new()), replaces }))
     }
 
     /// Set a single-valued property.

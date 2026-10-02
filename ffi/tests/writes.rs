@@ -469,6 +469,9 @@ fn renaming_a_value_reports_its_carriers() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// The file sits beside `liv.db`, so its place is stored relative to the
+/// box's folder — and the answer still hands back the WHOLE path, which
+/// is what a shell opens.
 #[test]
 fn a_file_is_added_by_reference_and_resyncs() {
     let d = dir("file");
@@ -493,17 +496,24 @@ fn a_file_is_added_by_reference_and_resyncs() {
     unsafe { liv_resync_file(path.as_ptr(), id.as_ptr(), T0 + 1, &mut out) };
     let r = took(out);
     assert_eq!(r["state"].as_str().unwrap(), "unchanged");
-    assert_eq!(r["path"].as_str().unwrap(), doc_s);
+    assert_eq!(r["path"].as_str().unwrap(), doc_s, "whole, though stored relative");
+    assert_eq!(r["bytes"].as_u64(), Some("first bytes".len() as u64));
 
     std::fs::write(&doc, "second bytes").unwrap();
     let mut out = std::ptr::null_mut();
     unsafe { liv_resync_file(path.as_ptr(), id.as_ptr(), T0 + 2, &mut out) };
-    assert_eq!(took(out)["state"].as_str().unwrap(), "changed");
+    let r = took(out);
+    assert_eq!(r["state"].as_str().unwrap(), "changed");
+    assert_eq!(r["path"].as_str().unwrap(), doc_s);
+    assert_eq!(r["bytes"].as_u64(), Some("second bytes".len() as u64), "the new size");
 
     std::fs::remove_file(&doc).unwrap();
     let mut out = std::ptr::null_mut();
     unsafe { liv_resync_file(path.as_ptr(), id.as_ptr(), T0 + 3, &mut out) };
-    assert_eq!(took(out)["state"].as_str().unwrap(), "broken");
+    let r = took(out);
+    assert_eq!(r["state"].as_str().unwrap(), "broken");
+    assert_eq!(r["path"].as_str().unwrap(), doc_s, "where it looked");
+    assert!(r["bytes"].is_null(), "and no size for what is not there: {r}");
 
     let mut out = std::ptr::null_mut();
     assert_eq!(
@@ -511,6 +521,213 @@ fn a_file_is_added_by_reference_and_resyncs() {
         LIV_ERR_REFUSED,
         "an unreadable path is never a phantom entity"
     );
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// A box in `d`, opened once and closed, and its path as the door takes it.
+fn box_at(d: &std::path::Path) -> CString {
+    std::fs::create_dir_all(d).unwrap();
+    let path = d.join("liv.db");
+    { Engine::open_local(&path).unwrap(); }
+    unsafe { liv_view_close_all() };
+    c(path.to_str().unwrap())
+}
+
+/// A file at `rel` under `d`, with its folders; its whole path.
+fn put(d: &std::path::Path, rel: &str, body: &[u8]) -> String {
+    let p = d.join(rel);
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(&p, body).unwrap();
+    p.to_str().unwrap().to_owned()
+}
+
+fn add(path: &CString, file: &str) -> CString {
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_add_file(path.as_ptr(), c(file).as_ptr(), T0, &mut out) }, LIV_OK);
+    c(took(out)["id"].as_str().unwrap())
+}
+
+fn resync(path: &CString, id: &CString, at: u64) -> J {
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_resync_file(path.as_ptr(), id.as_ptr(), at, &mut out) }, LIV_OK);
+    took(out)
+}
+
+/// **The bug this fixes.** The phone's box and its files live in the
+/// app's folder, which moves when the app is reinstalled or updated.
+#[test]
+fn a_file_beside_a_moved_box_still_opens() {
+    let d = dir("moved_box");
+    let before = d.join("old");
+    let path = box_at(&before);
+    let id = add(&path, &put(&before, "files/u1/invoice.pdf", b"some bytes"));
+    unsafe { liv_view_close_all() };
+
+    let after = d.join("new");
+    std::fs::rename(&before, &after).unwrap();
+    let path = c(after.join("liv.db").to_str().unwrap());
+
+    let r = resync(&path, &id, T0 + 1);
+    assert_eq!(r["state"], "unchanged", "{r}");
+    assert_eq!(r["path"].as_str().unwrap(), after.join("files/u1/invoice.pdf").to_str().unwrap());
+    assert_eq!(r["bytes"].as_u64(), Some(10));
+
+    unsafe { liv_view_close_all() };
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_file_outside_the_box_folder_is_opened_where_it_is() {
+    let d = dir("outside_box");
+    let path = box_at(&d.join("box"));
+    let file = put(&d, "elsewhere/report.pdf", b"twelve bytes");
+    let id = add(&path, &file);
+
+    let r = resync(&path, &id, T0 + 1);
+    assert_eq!(r["state"], "unchanged", "{r}");
+    assert_eq!(r["path"].as_str().unwrap(), file);
+    assert_eq!(r["bytes"].as_u64(), Some(12));
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+// ---- a file that holds text is a note ----------------------------------
+
+fn file_text(file: &str) -> Result<J, i32> {
+    let mut out = std::ptr::null_mut();
+    match unsafe { liv_file_text(c(file).as_ptr(), &mut out) } {
+        LIV_OK => Ok(took(out)),
+        code => {
+            assert!(out.is_null(), "a refused call delivers nothing to free");
+            Err(code)
+        }
+    }
+}
+
+#[test]
+fn a_files_text_comes_back_with_the_name_a_note_would_have() {
+    let d = dir("file_text");
+    let md = put(&d, "Linux Installation.md", b"# Partition\r\nfirst");
+    assert_eq!(
+        file_text(&md).unwrap(),
+        serde_json::json!({ "name": "Linux Installation", "text": "# Partition\nfirst" })
+    );
+
+    let png = put(&d, "scan.png", b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR");
+    assert_eq!(file_text(&png).unwrap(), serde_json::json!({ "name": "scan", "text": null }));
+
+    assert_eq!(file_text(d.join("missing.md").to_str().unwrap()), Err(LIV_ERR_REFUSED));
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_file_text(std::ptr::null(), &mut out) }, LIV_ERR_ARG);
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// What `liv_cells` says one property of one thing holds, by its word.
+fn cell(path: &CString, id: &CString, word: &str) -> Option<J> {
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_ffi::basics::liv_cells(path.as_ptr(), id.as_ptr(), &mut out) }, LIV_OK);
+    took(out).as_array().unwrap().iter().find(|r| r["word"] == word).cloned()
+}
+
+fn undo_state(path: &CString) -> J {
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_undo_state(path.as_ptr(), &mut out) }, LIV_OK);
+    took(out)
+}
+
+#[test]
+fn a_note_is_made_with_its_words_in_one_call() {
+    let d = dir("make_note");
+    let path = box_at(&d);
+    let spans = r#"[{"Break":{"Heading":1}},{"Text":"Partition"},{"Break":"Body"},{"Text":"first"}]"#;
+
+    let mut out = std::ptr::null_mut();
+    let code = unsafe {
+        liv_make_note(path.as_ptr(), c("Linux Installation").as_ptr(), c(spans).as_ptr(), T0, &mut out)
+    };
+    assert_eq!(code, LIV_OK);
+    let id = c(took(out)["id"].as_str().unwrap());
+
+    let mut out = std::ptr::null_mut();
+    unsafe { liv_read_body(path.as_ptr(), id.as_ptr(), &mut out) };
+    assert_eq!(took(out)["spans"], serde_json::from_str::<J>(spans).unwrap());
+    assert_eq!(cell(&path, &id, "name").unwrap()["value"], "Linux Installation");
+    assert_eq!(cell(&path, &id, "kind").unwrap()["ref"], kind::NOTE.hex());
+
+    // One undo throws the whole note away — no empty note left behind.
+    assert_eq!(unsafe { liv_undo(path.as_ptr(), T0 + 1) }, LIV_OK);
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_ffi::finding::liv_view_trash(path.as_ptr(), 0, &mut out) }, LIV_OK);
+    let bin = took(out);
+    assert!(bin.as_array().unwrap().iter().any(|r| r["id"] == id.to_str().unwrap()), "{bin}");
+
+    // No name is no name cell.
+    let mut out = std::ptr::null_mut();
+    let code =
+        unsafe { liv_make_note(path.as_ptr(), std::ptr::null(), c(spans).as_ptr(), T0 + 2, &mut out) };
+    assert_eq!(code, LIV_OK);
+    let nameless = c(took(out)["id"].as_str().unwrap());
+    assert_eq!(cell(&path, &nameless, "name"), None);
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_note_that_cannot_be_made_writes_nothing() {
+    let d = dir("make_note_refused");
+    let path = box_at(&d);
+    let before = undo_state(&path);
+    assert_eq!(before["undo"], false, "a fresh box has done nothing");
+
+    let ghost = c(r#"[{"Ref":"99999999999999999999999999999999"}]"#);
+    let mut out = std::ptr::null_mut();
+    let code = unsafe { liv_make_note(path.as_ptr(), c("Roof").as_ptr(), ghost.as_ptr(), T0, &mut out) };
+    assert_eq!(code, LIV_ERR_REFUSED, "a link to nothing");
+    assert!(out.is_null());
+
+    let mut out = std::ptr::null_mut();
+    let code =
+        unsafe { liv_make_note(path.as_ptr(), c("Roof").as_ptr(), c("not spans").as_ptr(), T0, &mut out) };
+    assert_eq!(code, LIV_ERR_ARG, "not span JSON");
+
+    assert_eq!(undo_state(&path), before, "and nothing was written");
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_file_becomes_a_note_over_the_door() {
+    let d = dir("into_note");
+    let path = box_at(&d);
+    let file = put(&d, "files/u1/Linux Installation.md", b"Partition first");
+    let id = add(&path, &file);
+    let spans = r#"[{"Text":"Partition first"}]"#;
+
+    let code = unsafe { liv_file_into_note(path.as_ptr(), id.as_ptr(), c(spans).as_ptr(), T0 + 1) };
+    assert_eq!(code, LIV_OK);
+
+    let mut out = std::ptr::null_mut();
+    unsafe { liv_read_body(path.as_ptr(), id.as_ptr(), &mut out) };
+    assert_eq!(took(out)["spans"], serde_json::from_str::<J>(spans).unwrap());
+    assert_eq!(cell(&path, &id, "kind").unwrap()["ref"], kind::NOTE.hex());
+    assert_eq!(cell(&path, &id, "name").unwrap()["value"], "Linux Installation");
+    assert_eq!(cell(&path, &id, "file"), None);
+    assert_eq!(cell(&path, &id, "format"), None);
+    assert_eq!(std::fs::read(&file).unwrap(), b"Partition first", "never written");
+
+    // A note is not a file, so it cannot become one twice.
+    let code = unsafe { liv_file_into_note(path.as_ptr(), id.as_ptr(), c(spans).as_ptr(), T0 + 2) };
+    assert_eq!(code, LIV_ERR_REFUSED);
+
+    let other = add(&path, &put(&d, "files/u2/other.txt", b"other"));
+    let ghost = c(r#"[{"Ref":"99999999999999999999999999999999"}]"#);
+    let code = unsafe { liv_file_into_note(path.as_ptr(), other.as_ptr(), ghost.as_ptr(), T0 + 3) };
+    assert_eq!(code, LIV_ERR_REFUSED, "a link to nothing");
+    let code = unsafe { liv_file_into_note(path.as_ptr(), other.as_ptr(), c("{}").as_ptr(), T0 + 3) };
+    assert_eq!(code, LIV_ERR_ARG, "not span JSON");
+    assert!(cell(&path, &other, "file").is_some(), "still a file");
 
     let _ = std::fs::remove_dir_all(&d);
 }

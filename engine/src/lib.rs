@@ -37,7 +37,7 @@ pub use civil::{civil_from_days, days_from_civil};
 pub use clerk::{print_text, Proposal};
 pub use content::{fingerprint, ContentError, ContentVersion};
 pub use engine::Engine;
-pub use files::{hash_file, FileError, Resync};
+pub use files::{hash_file, note_name, text_of, FileError, Resync, TEXT_CAP};
 pub use model::{
     kind, prop, status, Holds, PropDef, Refused, ALL_KINDS, KINDS, PROPS, STATUSES,
 };

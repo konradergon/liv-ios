@@ -264,20 +264,65 @@ int32_t liv_rename_value(const char *path, const char *property,
 
    Never copies or moves it — the file is read to hash it and left where
    the user put it. An unreadable path is LIV_ERR_REFUSED, never a
-   phantom entity with a hash of nothing. */
+   phantom entity with a hash of nothing.
+
+   A file INSIDE THE BOX'S FOLDER is remembered relative to it, so a
+   moved box or a reinstalled app still finds it — which is why the phone
+   puts what it is handed in <box folder>/files/<uuid>/<name> first. A
+   file anywhere else is remembered by its whole path. */
 int32_t liv_add_file(const char *path, const char *file, uint64_t now_ms,
                      char **out);
 
 /* Re-hash what a file points at on this device.
-   {"state":"unchanged"|"changed"|"broken", "path":…|null}
+   {"state":"unchanged"|"changed"|"broken", "path":…|null, "bytes":N|null}
 
    A changed hash IS the integration — it is how Liv learns Word saved
    the file. A vanished path is "broken" and LEAVES THE STORED HASH
    ALONE: a file on an unplugged drive is not a file whose contents
-   changed. `path` is null for a file that arrived by sync and has no
-   copy here, which is the honest answer to "where were you looking". */
+   changed.
+
+   THIS IS WHERE A SHELL LEARNS WHERE A FILE IS. `path` is always whole,
+   joined to the box's folder as it is now, so it is the path to open; it
+   is null for a file that arrived by sync and has no copy here, and a
+   broken file still names where it looked. `bytes` is the file's size,
+   null when broken. */
 int32_t liv_resync_file(const char *path, const char *id, uint64_t now_ms,
                         char **out);
+
+/* The words in a file, and what a note made of it is called:
+   {"name":"<name without its extension>", "text":"…"|null}
+
+   NO BOX — it reads one file and writes nothing. `text` is null when the
+   file does not hold text, and that is the engine's call, not the
+   shell's: UTF-8, no NUL byte, at most half a megabyte, and not another
+   app's markup (rtf, csv, svg, html, xml, ics, vcf, eml…). An empty file
+   is text only when its name says so (.txt, .md, none). A byte order mark
+   is dropped and every line ending reads as \n. `name` loses only a real
+   extension: "Dr. Who quotes" stays whole. A path that will not read is
+   LIV_ERR_REFUSED. */
+int32_t liv_file_text(const char *file, char **out);
+
+/* Make a note with its name and its words in ONE action. {"id":"<hex>"}
+
+   What a text file handed to the phone becomes: liv_make then
+   liv_write_body would be two actions, and one undo would leave an empty
+   note behind. `name` may be NULL, and a blank one writes no name; empty
+   spans write no body. LIV_ERR_ARG for spans that are not span JSON;
+   LIV_ERR_REFUSED for a link to nothing, with nothing written. */
+int32_t liv_make_note(const char *path, const char *name, const char *spans,
+                      uint64_t now_ms, char **out);
+
+/* Turn a file the box holds into a note of these spans, in ONE action.
+
+   It keeps its id, so its links and cells stay; it loses its hash, its
+   format, and that format's extension off the end of its name — nothing
+   else of a name someone typed. A file becomes a note; a task or an event
+   that carries a file stays what it is. The file on disk is never
+   written, and one liv_undo makes it the file it was. LIV_ERR_REFUSED,
+   with nothing written, for something that is not a file, a file in the
+   trash, or a link to nothing. */
+int32_t liv_file_into_note(const char *path, const char *id, const char *spans,
+                           uint64_t now_ms);
 
 /* What the clerk would suggest, as the inbox reads it.
    [{"entity":"<hex>", "print":N, "proposer", "reason"}…]

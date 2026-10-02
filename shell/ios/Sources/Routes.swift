@@ -37,8 +37,9 @@ enum Route: Equatable {
     /// sentence — which the thesis says makes it nobody's first reflex,
     /// however good the capture screen is.
     case capture(String?)
-    /// The camera, straight to the shutter.
-    case capturePhoto
+    /// The scanner (the camera reads text and nothing else). The link is
+    /// still `liv://capture/photo`: a link another app holds keeps working.
+    case scan
     /// A view, by name, optionally at a position inside it
     /// (`LivPosition`). The spec names `liv://inbox`; the other four come
     /// free because they are the same `Feature` enum, and the spec's own
@@ -70,7 +71,7 @@ enum Route: Equatable {
         case ("capture", nil):
             self = .capture(Self.payload(of: url))
         case ("capture", "photo"):
-            self = .capturePhoto
+            self = .scan
         case ("entity", let id?):
             guard let n = LivIDText.read(id) else { return nil }
             self = .entity(n)
@@ -129,7 +130,7 @@ func livRoutesSelfCheck() -> [String] {
     func route(_ s: String) -> Route? { URL(string: s).flatMap(Route.init) }
 
     check("bare capture", route("liv://capture") == .capture(nil))
-    check("photo", route("liv://capture/photo") == .capturePhoto)
+    check("photo opens the scanner", route("liv://capture/photo") == .scan)
     check("a view", route("liv://inbox") == .view(.inbox, at: nil))
     // THE ALIAS. `liv://notes` shipped while Notes was a view; it is a
     // lens now and the link still lands on the same screen (2026-09-10).
@@ -156,7 +157,7 @@ func livRoutesSelfCheck() -> [String] {
     check("trimmed", route("liv://capture?text=%20%20a%20%20") == .capture("a"))
     check("blank is a bare capture", route("liv://capture?text=%20%20") == .capture(nil))
     check("payload on a view is ignored", route("liv://inbox?text=x") == .view(.inbox, at: nil))
-    check("payload on photo is ignored", route("liv://capture/photo?text=x") == .capturePhoto)
+    check("payload on photo is ignored", route("liv://capture/photo?text=x") == .scan)
     return fail
 }
 

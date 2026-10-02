@@ -1,5 +1,199 @@
 # Liv iOS — changelog (batch summaries; newest first)
 
+## 2026-10-02 — bigger heading steps; the editor stays
+
+The owner (2 Oct): "think we iterate over problems with the current editor
+instead of codemirror for now" — no CodeMirror trial.
+
+**Heading sizes.** "Make the largest header a bit larger and increase
+size steps between the six sizes." They were 28, 26, 24, 22, 20, 18 — 2pt
+apart, H1 and H2 hard to tell apart. Now 30.5, 28, 25.5, 23, 20.5, 18:
+2.5pt apart, the smallest still the body's 18 in bold (the owner's 1 Oct
+rule). 3pt steps were tried on the simulator and put the largest at 33,
+over the note's own 32pt title, which then no longer read as the top of
+the page. One token, `LivType.Editor.headings`; the caret follows the
+font at it, and `livStylerSelfCheck`'s "###### is the body's bold" still
+holds.
+
+**The heading key.** It cycled none → `#` → `##` → `###` → none, as it
+had since the editor began, when three sizes were all there were. The
+owner's "toggles between three largest instead of all six possible" was a
+complaint, misread here at first as a request — "heading button still
+only cycles three, not six". Now it goes through all six and then off:
+none → `#` → … → `######` → none. The six is one constant,
+`MarkScan.headingLevels`, read by the scanner, the key and the codec (it
+was three literal 6s and a 3). Self-checks "cycle on past h3", "cycle to
+h6" and "cycle off after h6" — the first two seen failing before the fix.
+On the simulator, eight taps on the real key read `#` through `######`,
+then nothing, then `#`, and `liv content` shows the saved Heading 1.
+
+## 2026-10-02 — an × takes a value off; an empty field is blank
+
+Plan item 12, as the owner meant it: "deassigning values that an object
+belongs to, like 'this note isn't area Work'" — "simple". A first try, a
+None row at the top of the pickers, was wrong: "no area isn't 'None', it's
+just no area assigned". It is gone. Now:
+- a properties row holding ONE value — Due, Status, Area, Project — has an
+  × where its chevron stands. Tapping it empties the field; tapping the
+  rest of the row still opens the picker (the × is laid over the row, since
+  a button inside a button's or a menu's label gets no tap of its own).
+  People and Subject stay checklists: tick or untick in the picker. Before
+  this, a set status could not be emptied from the app at all.
+- an empty field shows nothing — "Area ›", not "Area None ›" — on every
+  row of the card (`DetailValue`).
+New `drive.sh clear`: a task seeded under Work, the row opens the picker,
+the × empties the cell (`liv cells`) and the row reads just "Area"; seen
+failing with the × doing nothing. Due and Status × were checked the same
+way by hand.
+
+## 2026-10-02 — the plan's small batch, and the camera reads only
+
+The owner answered the plan's decisions (1 Oct): `#` is a setting; the
+camera is for scanning only and a file that holds text is edited as a
+note; the panel opens from anywhere while the keyboard is down, with no
+scrolling as you swipe and none while it is open. Items from
+`design/plan.md`:
+
+**The title flash (4).** Every body save forgot the note's cached cells,
+so for one refresh its name read as empty and the title became its grey
+prompt, then came back. On the simulator it never showed — the re-read
+lands inside a frame on a Mac — so the re-read was slowed to a phone's
+pace on purpose (0.6 s), and then it did: four frames of "first line of
+the body mo…" in place of the name, after every autosave. Fixed at the
+root: a body save no longer forgets the cells (they are everything but
+the body), and the cell cache now keeps the last values on screen until
+a re-read replaces them, with a ticket per read so an answer a later
+write disowned can never land over a newer one. Same slowed re-read
+afterwards: 40 frames over two autosaves, the title never moved. Two
+more editor bugs from the same reading, fixed: a reload that lands after
+you typed no longer overwrites what you typed (the base stays, so the
+compare-and-swap still catches a real conflict), and a save that wrote
+nothing no longer makes the editor ignore the next change from
+elsewhere.
+
+**The panel (9, 10, and "from anywhere").** It slid in while you were
+selecting text: the claim now refuses while the keyboard is up or any
+text is being edited — the latter also covers a hardware keyboard,
+where no keyboard rises (`KeyboardWatch.editing`). The list under a
+swipe scrolled with the thumb's drift and coasted on: when the panel
+takes a swipe, the scroll view under the finger lets go of it. And "from
+anywhere" had not worked on any list: a check meant for text-selection
+handles vetoed any view whose class name holds "Selection", and
+SwiftUI's List host is `…SelectionManagerBox…` — so only the edges and
+non-list areas opened the panel. That check is gone; editing is what the
+claim refuses now. New `drive.sh swipe`: a drag mid-list opens the
+panel and the list does not move; a note being edited refuses the drag
+until the keyboard is put away. Seen failing with the cancel removed
+(the rows moved 90pt).
+
+**Search (7).** Not reproduced — the test simulator has a hardware
+keyboard, so no keyboard rises. The two causes the reading found are
+fixed: the field asks for the keyboard after the cover's slide
+(`LivMotion.coverSeconds`) rather than during it, and the card pill that
+sat 10pt from the bottom — on the search field itself — now sits above
+the foot and hides while you type (`SearchPill`).
+
+**Headings (2, 3).** `######` is a bold line: the body's pitch, no air of
+its own (its font was already the body's bold). A setting, Appearance →
+"Show # in headings", on by default (the owner's "at least by default"):
+on, a heading's marks show dimmed on every line, so nothing shifts when
+the caret comes onto it; off, they hide off the caret's line as before.
+A note that is open restyles when it changes. The styler checks run in
+both modes.
+
+**Files (8).** Every file read "The file has moved or been deleted", and
+it was a bug: the app took the `file` cell's display value — the first
+eight hex of the content's fingerprint — for the file's path. The phone
+also stored whole paths inside its own container, which moves when the
+app is reinstalled. Now (Rust first, tests first — 424 pass):
+- the box remembers a file inside its own folder RELATIVE to it
+  (`Engine::home`, `place`, `path_of` the one resolver); the phone copies
+  a file it is handed to `files/<uuid>/<its name>` beside `liv.db`. A moved
+  box still finds its files; old whole paths still read as written.
+- `liv_resync_file` answers the whole path and the size, and that answer
+  is what a file's screen draws: its name, what it is, its size, and Open
+  (the share sheet, with the file's real name). "Open in…" left the •••
+  menu: one way to open, on the screen. Nothing is drawn under the name
+  until the box has looked, so a file never flashes "moved".
+- a file that holds TEXT is a note (owner: "files opened if they contain
+  text, which is edited as a note"). Rust is the one judge — `text_of`:
+  UTF-8, no NUL, at most 512 KiB. Added, it arrives as a note in one action
+  (`liv_make_note`, one undo) and nothing is copied; an older file entity
+  becomes a note when opened (`liv_file_into_note`, one action, one undo
+  gives the file back exactly). The file itself is never written.
+- `FileFacts` reads `has_file` off the row, so a file is a file before its
+  cells arrive (it opened as a record card from a list).
+Three door functions added (`liv_file_text`, `liv_make_note`,
+`liv_file_into_note`; 49 → 52) and `liv_resync_file` gained `bytes` — all
+additive. Seen on the simulator: a PDF beside the box opened as "PDF ·
+35 bytes · Open" and Open showed the share sheet with Preview; a `.md`
+file became its note, named without `.md`; the + menu's File picker took a
+markdown file and a PNG at once — a note, and a copy at
+`files/<uuid>/Diagram.png` stored relative; a moved-away file showed the
+"moved" card. New `drive.sh files` and `drive.sh scan`, each seen failing.
+
+**The camera (8).** Scan text only. The photo shutter, the
+tray, captions, chips, the front/back flip and the photo store went —
+Camera.swift is 893 lines → about 300. One shutter that reads, a Close
+button, the torch, and a line that says "Scan text" (then "Reading…").
+`liv://capture/photo` still opens it, so a link held elsewhere keeps
+working. The camera's permission text says what it is for now.
+
+**A review of the batch** (eight readers, each finding checked) found
+these, all fixed:
+- the panel took a rightward swipe on a Today or Tasks row: the panel
+  opened AND the row's Tonight · Tomorrow · Pick slid out. A row's own
+  swipe now comes first — the panel waits for it to fail, which it does
+  at once on a row with no action that way — and from the screen's edge
+  the panel still wins. `drive.sh swipe` checks both; seen failing.
+- files: an RTF letter, a CSV, an SVG or a web page is UTF-8 but not a
+  note — it arrived as raw markup. `text_of` turns those formats (and PDF) down, and
+  an empty file is text only when its name says so (`.txt`, `.md`, none).
+  "Letter to Dr. Who" lost " Who" (anything after a dot was an
+  extension); now only a short alphanumeric extension with a letter in it
+  comes off, and turning a file into a note strips only that file's own
+  format. A task carrying a file kept its words but became a note; it
+  stays a task. Five new tests; 429 pass.
+- the scanner: Close while it was reading still made a note later; now
+  dropped. The note is made in one action (`liv_make_note`), so one undo
+  takes it back and a refused write leaves nothing.
+- the `[[` link search waited half a second for the keyboard, and the
+  letters typed after `[[` were lost; it takes focus at once. The panel
+  could latch behind the link and outline sheets; they hold it off like
+  every other card.
+
+## 2026-10-01 — underscore emphasis, quote bars; the next plan
+
+**Underscores.** `_x_`, `__x__` and `___x___` are italic, bold and both —
+the same marks as the stars — but only at a word's edges, CommonMark's
+rule in short: a run opens after a non-word character and before a
+non-space, and closes after a non-space and before a non-word character.
+So `snake_case_name` stays words and `__init__` is bold. They are stored
+as marks, like the stars, so a note saved with `_x_` comes back as `*x*`
+— the stored form keeps the emphasis, not which character typed it, as it
+already did for `* bullet` → `- bullet`. Six self-checks.
+
+**Quote bars.** A quote or a callout has a 3pt bar down the margin and its
+words start 16pt right of it (`LivType.Editor.quoteBar`, `quoteIndent`).
+The lines carry `.livQuote` with their newlines, so a run of quote lines
+is one bar, computed over the whole run so a partial redraw does not
+round it in the middle; it ends at the bottom of the words. Three checks
+on a real TextKit stack, one seen failing with the attribute removed.
+
+**`drive.sh event` cleans up.** Every run left its event on the day, and
+after a dozen runs there was no free hour left to tap; it now throws away
+what it made (and the seven it had left were trashed).
+
+**`design/plan.md`**: the owner's next list, looked into first — the
+title flash (every body save forgets the note's name for one refresh),
+text selection sliding the panel, the desk scrolling behind the panel,
+the keyboard over search, every file reading as "moved or deleted" (the
+fingerprint read as a path), no way to remove or rename an area, the
+drag model, vibrations, and the editor question (keep TextKit, or try
+CodeMirror). Four decisions wait on the owner.
+
+`suites.sh` 13/13; every `drive.sh` check passes.
+
 ## 2026-10-01 — web links in notes; made names on the phone's clock
 
 **Web links.** A pasted address was plain text, and nothing in a note

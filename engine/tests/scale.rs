@@ -643,3 +643,144 @@ fn a_query_with_nothing_to_seek_on_is_linear_and_says_so() {
     assert!(ratio > 4.0, "this one really is linear; if it is not, say so: {ratio:.1}x");
     assert!(ratio < 25.0, "linear, not quadratic: {ratio:.1}x");
 }
+
+// ---- files, and the notes they become ---------------------------------
+
+/// **Making a note is one write in any box.** Its links are checked
+/// against the box first — the loop that would quietly become "per link,
+/// scan everything".
+#[test]
+fn making_a_note_stays_flat_as_the_box_grows() {
+    let mut small = box_of(500);
+    let mut large = box_of(5_000);
+    let first = |e: &Engine| e.all_entities().unwrap()[0];
+    let (to_small, to_large) = (first(&small), first(&large));
+
+    // A write mutates, so fifty a round rather than one; `at` only moves
+    // forward because the engine's clock does.
+    let at = std::cell::Cell::new(2_000_000_000_000u64);
+    let make = |e: &mut Engine, to: EntityId| {
+        for _ in 0..50 {
+            let spans = vec![Span::text("see "), Span::Ref(to)];
+            e.make_note(Some("Linux Installation"), spans, at.get()).unwrap();
+            at.set(at.get() + 1);
+        }
+    };
+    let ratio = best_ratio(
+        3,
+        || time(|| make(&mut small, to_small)),
+        || time(|| make(&mut large, to_large)),
+    );
+    assert!(ratio < 3.0, "ten times the box multiplied making a note by {ratio:.2}x");
+}
+
+/// `n` quiet things and `files` file entities, shaped as `add_file`
+/// leaves them. No file on disk: turning one into a note never reads it.
+fn box_with_files(n: u64, files: u64) -> (Engine, Vec<EntityId>) {
+    let mut e = box_of(n);
+    let ids = (0..files)
+        .map(|i| {
+            let at = 1_900_000_000_000 + i;
+            let id = e.mint(at);
+            let mut hash = [0u8; 32];
+            hash[..8].copy_from_slice(&i.to_le_bytes());
+            let cell = |prop, value| Op::SetCell { entity: id, prop, value, replaces: vec![] };
+            e.commit(
+                vec![
+                    Op::CreateEntity { entity: id },
+                    cell(prop::KIND, Value::Ref(kind::FILE)),
+                    cell(prop::NAME, Value::Text(format!("file {i}.md"))),
+                    cell(prop::FILE, Value::Blob(hash)),
+                    cell(prop::FORMAT, Value::Text("md".into())),
+                ],
+                action::CREATE,
+                Author::User,
+                at,
+            )
+            .unwrap();
+            id
+        })
+        .collect();
+    (e, ids)
+}
+
+#[test]
+fn turning_a_file_into_a_note_stays_flat_as_the_box_grows() {
+    let (mut small, small_files) = box_with_files(500, 150);
+    let (mut large, large_files) = box_with_files(5_000, 150);
+
+    // Fifty different files a round: a file already turned is refused,
+    // and timing the refusal would time nothing.
+    let at = std::cell::Cell::new(2_000_000_000_000u64);
+    let round = std::cell::Cell::new(0usize);
+    let turn = |e: &mut Engine, files: &[EntityId]| {
+        for &id in files {
+            e.file_into_note(id, vec![Span::text("words")], at.get()).unwrap();
+            at.set(at.get() + 1);
+        }
+    };
+    let ratio = best_ratio(
+        3,
+        || {
+            let r = round.get() * 50;
+            time(|| turn(&mut small, &small_files[r..r + 50]))
+        },
+        || {
+            let r = round.get() * 50;
+            round.set(round.get() + 1);
+            time(|| turn(&mut large, &large_files[r..r + 50]))
+        },
+    );
+    assert!(ratio < 3.0, "ten times the box multiplied turning a file by {ratio:.2}x");
+}
+
+/// A box on disk whose `places` holds `n` rows, and one file among them
+/// remembered relative to the box's folder.
+fn box_with_places(name: &str, n: u64) -> (Engine, EntityId, std::path::PathBuf) {
+    let d = std::env::temp_dir().join(format!("liv_engine_scale_{name}"));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let mut e = Engine::open(&d.join("liv.db"), dev(1)).unwrap();
+
+    // One transaction for the rows: they are the setting, not the measure.
+    e.conn().execute_batch("BEGIN").unwrap();
+    for i in 0..n {
+        let mut hash = [0xaa; 32];
+        hash[..8].copy_from_slice(&i.to_le_bytes());
+        view::remember_path(e.conn(), &hash, &format!("files/{i}/scan.pdf")).unwrap();
+    }
+    e.conn().execute_batch("COMMIT").unwrap();
+
+    let id = e.mint(1_900_000_000_000);
+    e.commit(
+        vec![
+            Op::CreateEntity { entity: id },
+            Op::SetCell { entity: id, prop: prop::FILE, value: Value::Blob([1; 32]), replaces: vec![] },
+        ],
+        action::CREATE,
+        Author::User,
+        1_900_000_000_000,
+    )
+    .unwrap();
+    e.remember_path(id, d.join("files/one/x.pdf").to_str().unwrap()).unwrap();
+    (e, id, d)
+}
+
+/// Opening a file asks where it is first, every time. That is a seek on
+/// the hash and a join to the box's folder, never a walk of `places`.
+#[test]
+fn finding_a_files_place_stays_flat_as_places_grow() {
+    let (small, a, small_dir) = box_with_places("places_small", 500);
+    let (large, b, large_dir) = box_with_places("places_large", 5_000);
+    assert!(small.path_of(a).unwrap().unwrap().ends_with("files/one/x.pdf"));
+
+    let ratio = best_ratio(
+        6,
+        || time(|| for _ in 0..100 { small.path_of(a).unwrap(); }),
+        || time(|| for _ in 0..100 { large.path_of(b).unwrap(); }),
+    );
+    assert!(ratio < 2.5, "ten times the places multiplied finding one by {ratio:.2}x");
+
+    let _ = std::fs::remove_dir_all(&small_dir);
+    let _ = std::fs::remove_dir_all(&large_dir);
+}

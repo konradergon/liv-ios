@@ -222,3 +222,58 @@ fn a_box_with_bodies_replays_identically() {
     assert_eq!(e.digest().unwrap(), before, "the replay gate holds over content");
     assert_eq!(body(&e, a), vec![Span::text("simpler")]);
 }
+
+// ---- a note made whole ------------------------------------------------
+//
+// A text file shared to the phone becomes a note with its words in it.
+// Made as `create` then `set_content` it would be two actions, and one
+// undo would leave an empty note behind.
+
+#[test]
+fn a_note_is_made_with_its_body_in_one_action() {
+    let mut e = engine();
+    let groups = e.group_count().unwrap();
+    let spans = vec![Span::Break(Block::Heading(1)), Span::text("Partition first")];
+
+    let id = e.make_note(Some("Linux Installation"), spans.clone(), T0).unwrap();
+
+    assert_eq!(e.group_count().unwrap(), groups + 1, "one action");
+    assert_eq!(e.kind_of(id).unwrap(), Some(kind::NOTE));
+    assert_eq!(e.name(id).unwrap().as_deref(), Some("Linux Installation"));
+    assert_eq!(body(&e, id), spans);
+
+    e.undo(T0 + 1).unwrap();
+    assert!(e.is_trashed(id).unwrap(), "one undo takes the whole note back");
+}
+
+#[test]
+fn a_note_with_no_name_or_no_words_has_no_cell_for_them() {
+    let mut e = engine();
+    let nameless = e.make_note(None, vec![Span::text("words")], T0).unwrap();
+    assert!(e.cell(nameless, prop::NAME).unwrap().is_empty());
+
+    let blank = e.make_note(Some("  "), vec![Span::text("words")], T0 + 1).unwrap();
+    assert!(e.cell(blank, prop::NAME).unwrap().is_empty(), "a blank name is no name");
+    let padded = e.make_note(Some("  Shopping "), vec![], T0 + 1).unwrap();
+    assert_eq!(e.name(padded).unwrap().as_deref(), Some("Shopping"));
+
+    let empty = e.make_note(Some("Empty"), vec![], T0 + 2).unwrap();
+    assert!(e.cell(empty, prop::BODY).unwrap().is_empty(), "no body, not an empty one");
+    assert_eq!(e.name(empty).unwrap().as_deref(), Some("Empty"));
+}
+
+#[test]
+fn a_note_with_a_link_to_nothing_is_not_made() {
+    let mut e = engine();
+    let (groups, things) = (e.group_count().unwrap(), e.entity_count().unwrap());
+    let ghost = EntityId([0x99; 16]);
+
+    let refused = e.make_note(Some("Roof"), vec![Span::text("see "), Span::Ref(ghost)], T0);
+    assert!(matches!(refused, Err(ContentError::Invalid)), "{refused:?}");
+    assert_eq!(e.group_count().unwrap(), groups, "nothing written");
+    assert_eq!(e.entity_count().unwrap(), things);
+
+    let real = note(&mut e, "Ferry times");
+    let made = e.make_note(Some("Roof"), vec![Span::Ref(real)], T0 + 1).unwrap();
+    assert_eq!(e.links_from(made).unwrap(), vec![real], "a real link is a link");
+}

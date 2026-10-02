@@ -17,7 +17,7 @@
 use crate::engine::Engine;
 use crate::id::EntityId;
 use crate::log::LogError;
-use crate::model::prop;
+use crate::model::{kind, prop};
 use crate::op::{Author, Op, Value};
 use crate::rich::{self, Span};
 use crate::write::{action, WriteError};
@@ -26,7 +26,8 @@ use crate::write::{action, WriteError};
 pub enum ContentError {
     /// The stored body moved since `base` was read. Re-read, then save.
     Stale,
-    /// No such entity, or a span points at one.
+    /// No such entity, not one this verb changes (`file_into_note` on
+    /// something that is not a file), or a span points at nothing.
     Invalid,
     Write(WriteError),
 }
@@ -35,7 +36,7 @@ impl std::fmt::Display for ContentError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ContentError::Stale => write!(f, "the body moved; re-read it"),
-            ContentError::Invalid => write!(f, "no such thing, or a link to nothing"),
+            ContentError::Invalid => write!(f, "no such thing, not one this changes, or a link to nothing"),
             ContentError::Write(e) => write!(f, "{e}"),
         }
     }
@@ -185,15 +186,8 @@ impl Engine {
         if fingerprint(current.as_ref()) != base {
             return Err(ContentError::Stale);
         }
-        // A reference to nothing is not content. A reference to something
-        // TRASHED is: trash is reversible, and emptying a note's
-        // neighbour must not be a reason this note's save fails.
         if let Some(Value::Rich(spans)) = &new {
-            for target in rich::refs(spans) {
-                if !self.exists(target)? {
-                    return Err(ContentError::Invalid);
-                }
-            }
+            self.links_resolve(spans)?;
         }
 
         let replaces = self.cell(entity, prop::BODY)?.into_iter().map(|(d, _)| d).collect();
@@ -211,5 +205,128 @@ impl Engine {
         };
         self.commit(vec![op], action::SET, Author::User, now_ms)?;
         Ok(fresh)
+    }
+
+    /// Make a note with its name and its body, in ONE action.
+    ///
+    /// What a text file handed to the phone becomes. `create` and then
+    /// `set_content` would be two actions, and one undo would leave an
+    /// empty note behind. A blank name writes no name cell and no spans
+    /// write no body, as everywhere else.
+    pub fn make_note(
+        &mut self,
+        name: Option<&str>,
+        spans: Vec<Span>,
+        now_ms: u64,
+    ) -> Result<EntityId, ContentError> {
+        self.links_resolve(&spans)?;
+        let id = self.mint(now_ms);
+        let mut ops = vec![
+            Op::CreateEntity { entity: id },
+            Op::SetCell { entity: id, prop: prop::KIND, value: Value::Ref(kind::NOTE), replaces: vec![] },
+        ];
+        if let Some(name) = name.map(str::trim).filter(|n| !n.is_empty()) {
+            ops.push(Op::SetCell {
+                entity: id,
+                prop: prop::NAME,
+                value: Value::Text(name.to_owned()),
+                replaces: vec![],
+            });
+        }
+        if !spans.is_empty() {
+            ops.push(Op::SetCell { entity: id, prop: prop::BODY, value: Value::Rich(spans), replaces: vec![] });
+        }
+        self.commit(ops, action::CREATE, Author::User, now_ms)?;
+        Ok(id)
+    }
+
+    /// Turn a file the box holds into a note of its words, in ONE action.
+    ///
+    /// The owner, 2026-10-01: a file that contains text is edited as a
+    /// note. It keeps its id, so every link to it and every cell the user
+    /// gave it stay; it stops being a file — kind NOTE, the spans as its
+    /// body, no hash and no format. A name that ends in the file's own
+    /// extension loses it: `Linux Installation.md` is a file's name, not a
+    /// note's. A task or event carrying a file keeps its kind.
+    ///
+    /// The file on disk is never written, and its place is kept: one undo
+    /// puts the hash back, and the hash is what finds the place.
+    ///
+    /// `SET`, not a code of its own — it changes cells of a thing that
+    /// already exists, which is what `SET` has always meant.
+    ///
+    /// Refused, with nothing written, for anything that is not a file, a
+    /// file in the trash, and a link to nothing.
+    pub fn file_into_note(
+        &mut self,
+        id: EntityId,
+        spans: Vec<Span>,
+        now_ms: u64,
+    ) -> Result<(), ContentError> {
+        if self.cell(id, prop::FILE)?.is_empty() || self.is_trashed(id)? {
+            return Err(ContentError::Invalid);
+        }
+        self.links_resolve(&spans)?;
+        let format = match self.one(id, prop::FORMAT)? {
+            Some(Value::Text(f)) => Some(f.clone()),
+            _ => None,
+        };
+
+        // A FILE becomes a note; a task or an event that carries a file
+        // keeps being what it is, and only its words move in.
+        let mut ops = Vec::new();
+        if matches!(self.kind_of(id)?, None | Some(kind::FILE)) {
+            ops.push(Op::SetCell {
+                entity: id,
+                prop: prop::KIND,
+                value: Value::Ref(kind::NOTE),
+                replaces: self.dots_of(id, prop::KIND)?,
+            });
+        }
+        if spans.is_empty() {
+            ops.extend(self.unset_op(id, prop::BODY)?);
+        } else {
+            ops.push(Op::SetCell {
+                entity: id,
+                prop: prop::BODY,
+                value: Value::Rich(spans),
+                replaces: self.dots_of(id, prop::BODY)?,
+            });
+        }
+        ops.extend(self.unset_op(id, prop::FILE)?);
+        ops.extend(self.unset_op(id, prop::FORMAT)?);
+        // ONLY THE FILE'S OWN EXTENSION comes off the name. A name someone
+        // typed is theirs: "Letter to Dr. Who" is not "Letter to Dr".
+        if let (Some(name), Some(format)) = (self.name(id)?, format) {
+            let suffix = format!(".{format}");
+            let cut = name.len().saturating_sub(suffix.len());
+            if cut > 0
+                && name.is_char_boundary(cut)
+                && name[cut..].eq_ignore_ascii_case(&suffix)
+            {
+                ops.push(Op::SetCell {
+                    entity: id,
+                    prop: prop::NAME,
+                    value: Value::Text(name[..cut].to_owned()),
+                    replaces: self.dots_of(id, prop::NAME)?,
+                });
+            }
+        }
+        self.commit(ops, action::SET, Author::User, now_ms)?;
+        Ok(())
+    }
+
+    /// Every link in these spans points at something the box holds.
+    ///
+    /// A reference to nothing is not content. A reference to something
+    /// TRASHED is: trash is reversible, and emptying a note's neighbour
+    /// must not be a reason this note's save fails.
+    fn links_resolve(&self, spans: &[Span]) -> Result<(), ContentError> {
+        for target in rich::refs(spans) {
+            if !self.exists(target)? {
+                return Err(ContentError::Invalid);
+            }
+        }
+        Ok(())
     }
 }

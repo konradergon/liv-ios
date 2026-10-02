@@ -106,7 +106,7 @@ extension SpanJSON: Codable {
                 }
             } else if let o = try? c.decode(BreakObject.self, forKey: .Break) {
                 if let level = o.Heading {
-                    self = .brk(.heading(max(1, min(6, Int(level)))))
+                    self = .brk(.heading(max(1, min(MarkScan.headingLevels, Int(level)))))
                 } else if let b = o.Bullet {
                     self = .brk(.bullet(depth: Int(b.depth ?? 0)))
                 } else if let b = o.Ordered {
@@ -300,7 +300,8 @@ enum SpanText {
         case .body, .other: return ""
         case .code(let lang): return "```" + (lang ?? "")
         case .callout(let kind): return "> [!" + kind + "] "
-        case .heading(let n): return String(repeating: "#", count: max(1, min(6, n))) + " "
+        case .heading(let n):
+            return String(repeating: "#", count: max(1, min(MarkScan.headingLevels, n))) + " "
         case .quote: return "> "
         case .rule: return "---"
         case .bullet(let d): return indent(d) + "- "
@@ -804,6 +805,12 @@ final class NoteEditorModel: ObservableObject {
                 self.loaded = true
                 return
             }
+            // TYPING WINS OVER A RELOAD THAT LANDS AFTER IT. The read is
+            // asynchronous, and words typed while it was in the air were
+            // overwritten by the box's older text (a rename reloads the
+            // note). Keep them, and keep the base, so the next save's
+            // compare-and-swap still catches a real conflict.
+            if self.dirty { return }
             let spans = doc.spans ?? []
             self.base = doc.fingerprint ?? 0
             self.seenTouch = self.box?.entity(self.id)?.recency ?? 0
@@ -940,8 +947,11 @@ final class NoteEditorModel: ObservableObject {
             }
             switch status {
             case 1:
+                // OURS ONLY IF IT WROTE. A save of what the box already
+                // held writes nothing and moves nothing, so the next change
+                // the box shows came from elsewhere and must not be adopted.
+                if fresh != self.base { self.adoptNextTouch = true }
                 self.base = fresh
-                self.adoptNextTouch = true
                 // What the box now holds. Anything typed since this save
                 // LEFT stays dirty: `mark` is the buffer it carried, and
                 // cleaning only up to that mark is what the old
@@ -1108,6 +1118,7 @@ struct NoteEditor: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var model = NoteEditorModel()
     @StateObject private var bridge = EditorBridge()
+    @AppStorage(LivHeadingMarks.key) private var headingMarks = true
     @State private var outlineShown = false
     /// The link door: search, presented to pick what to link to.
     @State private var linkShown = false
@@ -1211,7 +1222,8 @@ struct NoteEditor: View {
             onLink: { linkShown = true },
             onInsert: { insertMenu() },
             showsTitle: showsTitle, embedded: embedded,
-            note: embedded ? .absent : id
+            note: embedded ? .absent : id,
+            headingMarks: headingMarks
         )
         .frame(
             maxWidth: .infinity,
@@ -1223,9 +1235,11 @@ struct NoteEditor: View {
         .onChange(of: bridge.openLink) { _, link in
             if link != nil { linkShown = true }
         }
+        .livCard(while: linkShown)
         .sheet(isPresented: $linkShown, onDismiss: { bridge.dismissLink() }) {
             linkSearchSheet
         }
+        .livCard(while: outlineShown)
         .sheet(isPresented: $outlineShown) { outlineSheet }
     }
 

@@ -8,7 +8,7 @@ code disagree, the code is right and this page needs fixing.
 ```
  the iPhone app         shell/ios/   Swift. Draws the screens, handles touch.
         │
- the door               ffi/         49 functions. Text in, JSON out.
+ the door               ffi/         52 functions. Text in, JSON out.
         │
  the screens' answers   surface/     Rust. What Today, Tasks, Notes … show.
  the store              engine/      Rust. The ledger and the current state.
@@ -69,7 +69,9 @@ What the ledger gives for free:
 
 Files are known by fingerprint. Where a file sits on this phone is a
 separate table that never syncs, because a path means nothing on another
-device. Suggestions ("Work?") are worked out fresh each time. Only a
+device. The phone copies a file it is handed beside the box
+(`files/<uuid>/<name>`), and that place is remembered relative to the
+box's folder, so a reinstalled app still finds it. Suggestions ("Work?") are worked out fresh each time. Only a
 refusal is written, as a cell, so it syncs.
 
 ## The screens' answers
@@ -102,7 +104,7 @@ project filter, the Calendar's month.
 
 ## The door
 
-`ffi/`, declared in `ffi/liv.h`. 49 C functions in four files:
+`ffi/`, declared in `ffi/liv.h`. 52 C functions in four files:
 
 - `surfaces.rs`: one read per screen.
 - `basics.rs`: make, set, trash, restore. What every tap uses.
@@ -139,7 +141,8 @@ freed with `liv_string_free`. The door keeps each box open between calls.
   (Notes), `Tasks`, `Calendar` with `Month`, `Search`, `Trash`,
   `Settings`, `WorkspaceForm`.
 - **Documents**: a note opens in the editor (`Editor`, `EditorText`,
-  `EditorStyle`: markdown whose marks show only on the caret's line). A
+  `EditorStyle`: markdown whose marks show only on the caret's line, a
+  heading's `#` aside). A
   task or event opens as a card (`Record`). Properties are a card of their
   own (`Detail`).
 - **The look** is defined in one place: `Theme.swift`, for every size and
@@ -167,7 +170,7 @@ Ticking a task on Tasks:
 
 ## How it is checked
 
-- `cargo test`: about 370 Rust tests, across the engine, the screens'
+- `cargo test`: about 430 Rust tests, across the engine, the screens'
   answers and the door. The cost tests check that doubling the box
   roughly doubles the work, and never more.
 - `shell/ios/suites.sh`: 13 self-checks built into the app, run on the

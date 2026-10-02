@@ -370,7 +370,12 @@ final class BoxModel: ObservableObject {
     /// which is most of what made it 3.5 MB. An inspector needs one
     /// thing's cells when it opens; asking then is the whole difference.
     private var cellCache: [LivEntityID: [LivCell]] = [:]
-    private var cellsInFlight: Set<LivEntityID> = []
+    /// Cells a write has changed, still shown until the re-read lands.
+    private var staleCells: Set<LivEntityID> = []
+    /// The read in the air for a thing, by ticket — so an answer a later
+    /// write disowned can never land over a newer one.
+    private var cellTickets: [LivEntityID: Int] = [:]
+    private var lastCellTicket = 0
 
     /// name -> id for the compiled-in properties the views name.
     ///
@@ -413,7 +418,7 @@ final class BoxModel: ObservableObject {
         // Bounded by what is on screen. A list asks for the rows it is
         // about to draw and no others, which is the same rule as the rest
         // of the engine seam: pay for what you show.
-        if row.cells == nil { _ = cells(of: id) }
+        if row.cells == nil || staleCells.contains(id) { _ = cells(of: id) }
         return row
     }
 
@@ -622,6 +627,7 @@ final class BoxModel: ObservableObject {
         // thing was emptied out of the trash. Cells kept for something
         // that is gone would be answered from memory forever.
         cellCache = cellCache.filter { entities[$0.key] != nil }
+        staleCells = staleCells.filter { entities[$0] != nil }
         suggestionsOf = suggestionsOf.filter { entities[$0.key] != nil }
     }
 
@@ -651,16 +657,27 @@ final class BoxModel: ObservableObject {
     /// **Returns what it has and asks for the rest.** A view calls this
     /// while rendering, so it cannot wait; the answer publishes and the
     /// view draws again. Empty on the first call for a thing is normal.
+    ///
+    /// **WHAT IT HAS IS SHOWN UNTIL THE NEW ANSWER LANDS.** A write used to
+    /// empty the cache, so for one refresh a note's name read as nothing:
+    /// its title became the grey prompt and came back — "the title
+    /// flashes" (owner, 2026-10-01; seen on the simulator with the re-read
+    /// slowed to a phone's pace). Stale values stand in; a re-read
+    /// replaces them.
     func cells(of id: LivEntityID) -> [LivCell] {
-        if let held = cellCache[id] { return held }
-        guard !cellsInFlight.contains(id) else { return [] }
-        cellsInFlight.insert(id)
+        let held = cellCache[id]
+        if let held, !staleCells.contains(id) { return held }
+        guard cellTickets[id] == nil else { return held ?? [] }
+        lastCellTicket += 1
+        let ticket = lastCellTicket
+        cellTickets[id] = ticket
         engineCells(id) { [weak self] found in
             guard let self else { return }
-            // Still wanted? `forgetCells` takes an id out of the set
-            // when a write makes the answer stale, and this is where that
-            // decision is honoured.
-            guard self.cellsInFlight.remove(id) != nil else { return }
+            // Still wanted? `forgetCells` disowns a read when a write
+            // makes its answer old, and this is where that is honoured.
+            guard self.cellTickets[id] == ticket else { return }
+            self.cellTickets[id] = nil
+            self.staleCells.remove(id)
             self.cellCache[id] = found
             // Into the row too, so `box.entity(id)?.cells` reads them —
             // which is how the inspector already asks.
@@ -668,7 +685,7 @@ final class BoxModel: ObservableObject {
             // Publishing is what makes the view draw again with them.
             self.objectWillChange.send()
         }
-        return []
+        return held ?? []
     }
 
     /// Engine cells in the shape the inspector reads.
@@ -680,16 +697,15 @@ final class BoxModel: ObservableObject {
         }
     }
 
-    /// Forget one thing's cells, so the next ask re-reads them. Called
-    /// after a write that changed them.
+    /// One thing's cells are out of date: the next ask re-reads them,
+    /// and until it lands the old ones still show. Called after a write
+    /// that changed them.
     func forgetCells(of id: LivEntityID) {
-        cellCache.removeValue(forKey: id)
-        // **And disown any answer already in the air.** A write clears
-        // the cache and then lands; a read that started before it would
-        // arrive afterwards carrying the values from before the write,
-        // and put them back. Dropping it from the in-flight set is what
-        // makes the late answer unwanted rather than authoritative.
-        cellsInFlight.remove(id)
+        staleCells.insert(id)
+        // **And disown any answer already in the air.** A read that started
+        // before the write would arrive afterwards carrying the values
+        // from before it, and put them back.
+        cellTickets[id] = nil
     }
 
     /// Days since the epoch — what every engine verb counts in, and NOT
@@ -1002,7 +1018,7 @@ final class BoxModel: ObservableObject {
     }
 
     /// Empty a cell. **Not the same as setting it to nothing** — an unset
-    /// cell has no value, which is what a picker's "None" means.
+    /// cell has no value, which is what a row's × asks for.
     func unset(_ id: LivEntityID, _ property: String) {
         byName("unset", id, property, nil) { [weak self] i, p in
             self?.engineUnset(i, p)
@@ -1380,8 +1396,10 @@ final class BoxModel: ObservableObject {
         _ id: LivEntityID, spansJson: String, base: UInt64,
         done: @escaping (Int32, UInt64) -> Void
     ) {
-        engineSaveBody(id, spansJson: spansJson, base: base) { [weak self] print, fault in
-            self?.forgetCells(of: id)
+        // NO `forgetCells` HERE: a body save writes the body and nothing
+        // else, and the cells are everything but the body. Forgetting them
+        // on every autosave re-read the note's name each time.
+        engineSaveBody(id, spansJson: spansJson, base: base) { print, fault in
             guard let print else {
                 // -6 is the stale code, and it is the one the editor must
                 // tell apart: it means someone else moved the body, so
@@ -1395,9 +1413,41 @@ final class BoxModel: ObservableObject {
 
     /// Re-hash what a file points at on this device. A changed hash IS
     /// the integration — it is how Liv learns Word saved the file.
-    func resyncFile(_ id: LivEntityID, done: ((Bool) -> Void)? = nil) {
-        engineResync(id) { result, _ in
-            done?(result?.state == "changed")
+    /// Re-hash a file and say where it is and how big — the one answer a
+    /// file's screen needs.
+    func resyncFile(_ id: LivEntityID, done: ((LivResync?) -> Void)? = nil) {
+        engineResync(id) { result, _ in done?(result) }
+    }
+
+    /// The words in a file, judged by Rust's one rule (`text_of`).
+    func fileText(_ path: String, done: @escaping (LivFileText?) -> Void) {
+        boxQueue.async {
+            var out: UnsafeMutablePointer<CChar>?
+            let code = liv_file_text(path, &out)
+            let (value, _) = Self.decodeView(LivFileText.self, code: code, out: out)
+            DispatchQueue.main.async { done(value) }
+        }
+    }
+
+    /// A note with its name and its words, in one action — one undo.
+    func makeNote(name: String?, spansJson: String, done: @escaping (LivEntityID) -> Void) {
+        engineWriteValue(LivMade.self, { to, out in
+            livCString(name) { n in liv_make_note(to, n, spansJson, Self.nowMs, out) }
+        }) { [weak self] made, fault in
+            if fault != nil { self?.verbFailed("makeNote") }
+            done(made?.id ?? .absent)
+        }
+    }
+
+    /// A file that holds words becomes the note it is, in one action.
+    func fileIntoNote(_ id: LivEntityID, spansJson: String, done: @escaping (Bool) -> Void) {
+        let i = engineId(id)
+        engineWrite({ to in liv_file_into_note(to, i, spansJson, Self.nowMs) }) {
+            [weak self] fault in
+            // Its kind, its name and its file cells all changed.
+            self?.forgetCells(of: id)
+            if fault != nil { self?.verbFailed("fileIntoNote") }
+            done(fault == nil)
         }
     }
 
@@ -1600,9 +1650,6 @@ struct EntityRow: Decodable, Identifiable {
     //    `DateSpec` has no span variant and nothing expands a recurrence,
     //    so a repeating or two-ended event is a gap, not a bug in these
     //    lines (`design/rust-owns-the-mechanisms.md` §5).
-    //  - `vaultPath`: `hasFile` says whether there is one; WHERE it is on
-    //    this device is `liv_file_alerts`, because a path does not
-    //    survive a device boundary.
     //
     // **`contentPrint` WAS ONE OF THESE AND IS GONE** (2026-09-15). It
     // returned nil forever, and nil is not a harmless "not yet" when
@@ -1617,7 +1664,6 @@ struct EntityRow: Decodable, Identifiable {
     // that is missing (standing rule 6).
     var dueEnd: Int64? { nil }
     var positionedBy: String? { nil }
-    var vaultPath: String? { nil }
     var bookmarked: Bool? { nil }
 }
 
@@ -2217,7 +2263,18 @@ struct LivBoxHealth: Decodable {
 struct LivResync: Decodable {
     /// unchanged | changed | broken
     var state: String?
+    /// Where the file is on this device, always whole; null when the
+    /// device keeps no place for it.
     var path: String?
+    /// Its size; null when it is broken.
+    var bytes: Int64?
+}
+
+/// What a file holds, if it holds words (`liv_file_text`): `text` is null
+/// when it does not. `name` is what a note made from it is called.
+struct LivFileText: Decodable {
+    var name: String?
+    var text: String?
 }
 
 // MARK: - the engine lane: verbs
@@ -2400,7 +2457,7 @@ extension BoxModel {
     }
 
     /// Empty a cell. **Not the same as setting it to nothing** — an unset
-    /// cell has no value, which is what a picker's "None" means.
+    /// cell has no value, which is what a row's × asks for.
     func engineUnset(_ id: LivID, _ property: LivID, _ done: ((String?) -> Void)? = nil) {
         let (i, p) = (engineId(id), engineId(property))
         engineWrite({ to in liv_unset(to, i, p, Self.nowMs) }, done)

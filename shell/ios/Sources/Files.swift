@@ -1,54 +1,40 @@
-// liv iOS — files (design/p7-files-model.md, p15, p20j; owner
-// 2026-08-08: "how should the app be structured if it handles .docx,
-// LaTeX, Excel…").
+// liv iOS — files (owner, 2026-10-01: "files opened if they contain
+// text, which is edited as a note").
 //
-// A file of any format is an ORDINARY entity. The bytes stay where they
-// are; the box records a reference — the path and a hash of the content
-// — plus the same six fields everything else has. So a contract is
-// filed by area and project like a note is, appears in the same
-// searches, and answers to the same workspaces. That is the whole
-// answer to "folders can only hold a thing in one place".
+// A file that holds words IS a note: added, it arrives as one; an older
+// file entity that holds words becomes one the first time it is opened.
+// Rust is the one judge of what holds words (`text_of`) and the file
+// itself is never written — its words are copied into the box.
 //
-// Liv NEVER writes those bytes. It previews them, hands them to the app
-// that owns the format, and notices when that app saved: opening a file
-// re-hashes it, and a changed hash IS the integration. No watcher, no
-// timer, no sync engine.
+// Any other file is an ORDINARY entity, filed like everything else: its
+// name, what it is, how big, and an Open button that hands it to the app
+// that owns the format. No preview (owner, 2026-08-13: "preview should
+// not be a functionality since it is absolutely useless").
 //
-// There is no seventh kind. "Has a file" crosscuts the six — a scanned
-// contract is a file AND can be a task. `FileFacts.of` reads the cells,
-// it does not consult a type.
+// The phone keeps its copy beside the box, `files/<uuid>/<name>`, and the
+// box remembers that path relative to its own folder — so a reinstalled
+// app, whose folders move, still finds every file.
 
 import SwiftUI
-import UniformTypeIdentifiers
+import UIKit
 
-// MARK: - what the cells say
+// MARK: - what the row says
 
-/// The file an entity refers to, read off its cells. Nil for everything
-/// that is not a file, which is most things.
+/// The file an entity refers to. Nil for everything that is not a file,
+/// which is most things.
 struct FileFacts {
-    /// Where the bytes are, as the box recorded them.
-    let path: String
     /// The extension, lowercased, or "" — the core stores this as an
     /// ordinary `format` cell, so `format:pdf` filters for free.
     let format: String
 
+    /// A file is what Rust says has one (`has_file`, on every row), so a
+    /// row needs no cells to be one. The format is a cell; until the cells
+    /// arrive a file reads as a plain "File".
     static func of(_ row: EntityRow?) -> FileFacts? {
-        guard let row else { return nil }
-        guard
-            let cell = (row.cells ?? []).first(where: { $0.kind == "file" }),
-            let path = cell.value, !path.isEmpty
-        else { return nil }
-        let declared = (row.cells ?? [])
-            .first { $0.property == "format" }?.value ?? ""
-        let ext =
-            declared.isEmpty
-            ? (path as NSString).pathExtension.lowercased()
-            : declared.lowercased()
-        return FileFacts(path: path, format: ext)
+        guard let row, row.hasFile == true else { return nil }
+        let format = (row.cells ?? []).first { $0.word == "format" }?.value ?? ""
+        return FileFacts(format: format.lowercased())
     }
-
-    var url: URL { URL(fileURLWithPath: path) }
-    var exists: Bool { FileManager.default.fileExists(atPath: path) }
 
     /// The format as a phrase, for the one place that says it in words
     /// rather than drawing it. "cpp file", "PDF", "Spreadsheet".
@@ -64,21 +50,9 @@ struct FileFacts {
         }
     }
 
-    /// How big, in the shortest honest form. Empty when the file is gone
-    /// — the broken card says that instead.
-    var sizeWord: String {
-        guard
-            let size = try? FileManager.default
-                .attributesOfItem(atPath: path)[.size] as? Int64
-        else { return "" }
-        return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
-    }
-
     /// What KIND of file, for a glyph and for how to show it. Derived
     /// from the format, never stored — one function, so the icon in a
     /// list and the body of a tab can never disagree.
-    /// The glyph each class wears is drawn in Glyph.swift — one file
-    /// color, the format shown by the drawing (blueprints, 2026-08-12).
     enum Class: Equatable {
         case document, sheet, slides, pdf, image, text, other
     }
@@ -94,17 +68,11 @@ struct FileFacts {
         default: return .other
         }
     }
-
 }
 
 // MARK: - the body
 
-/// A file's tab: the name, then the BYTES, full bleed — the way a note
-/// tab is the note. The facts live behind the (i) door exactly as they
-/// do for a note; contents and properties never share a surface
-/// (owner, 2026-08-09: "never display file contents directly in
-/// property views"). The bytes are read-only on purpose: Word owns the
-/// words.
+/// A file's tab: its name, what it is, how big, and Open.
 struct FileBody: View {
     let id: LivEntityID
 
@@ -114,18 +82,27 @@ struct FileBody: View {
     @State private var name = ""
     @State private var seeded = false
     @State private var pendingName: String?
-    @State private var resynced = false
-    /// True while an old markdown file is turning into a note. The screen
-    /// stays blank for that beat rather than flashing the file view.
-    @State private var converting = false
+    /// Where the file is and how big, once the box has looked. Nothing is
+    /// drawn under the name until then, so a file never flashes "moved or
+    /// deleted" on its way to being found.
+    @State private var place: LivResync?
+    @State private var asked = false
     @FocusState private var nameFocused: Bool
 
     var body: some View {
         Group {
-            if converting {
-                Color.clear
-            } else if let row = box.entity(id), let facts = FileFacts.of(row) {
-                body(row, facts)
+            if let row = box.entity(id), let facts = FileFacts.of(row) {
+                VStack(alignment: .leading, spacing: 0) {
+                    nameField(facts)
+                    if let place {
+                        if place.state == "broken" || place.path == nil {
+                            brokenCard
+                        } else {
+                            heldCard(facts, place)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
             } else {
                 EmptyHint("Deleted")
                     .frame(maxHeight: .infinity)
@@ -140,48 +117,21 @@ struct FileBody: View {
         }
     }
 
-    /// A file tab is its NAME and its filing, and that is all (owner,
-    /// 2026-08-13: "preview should not be a functionality since it is
-    /// absolutely useless"). Reading a Word file means opening Word —
-    /// ••• → "Open in…" — and a read-only render of it inside Liv was
-    /// a screen that looked like an editor and was not one.
-    private func body(_ row: EntityRow, _ facts: FileFacts) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            nameField(facts)
-            if !facts.exists {
-                brokenCard(facts)
-            } else {
-                heldCard(facts)
+    /// WHAT LIV IS HOLDING, said plainly, and the one verb that opens it.
+    private func heldCard(_ facts: FileFacts, _ place: LivResync) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(facts.formatWord)
+                    .font(.system(size: LivType.strong, weight: .semibold))
+                    .foregroundStyle(LivTheme.text)
+                if let bytes = place.bytes {
+                    Text(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
+                        .font(.system(size: LivType.label).monospacedDigit())
+                        .foregroundStyle(LivTheme.text3)
+                }
             }
             Spacer(minLength: 0)
-        }
-    }
-
-    /// WHAT LIV IS HOLDING, said plainly.
-    ///
-    /// The rest of this screen was empty (owner, 2026-09-06: "why does it
-    /// open unsupported file types without rendering them"). The refusal
-    /// to preview is deliberate and stands — "preview should not be a
-    /// functionality since it is absolutely useless" (owner, 2026-08-13),
-    /// and a read-only render of a Word file inside Liv is a screen that
-    /// looks like an editor and is not one.
-    ///
-    /// But "no preview" had been built as "no preview and no explanation",
-    /// which are different things. A tab that shows a name and then a
-    /// blank page does not read as a decision; it reads as a failure to
-    /// load. This says what the file is, where it is, and how big — the
-    /// facts Liv actually holds — and points at the one verb that opens
-    /// the bytes, which lives in the ••• menu.
-    private func heldCard(_ facts: FileFacts) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(facts.formatWord)
-                .font(.system(size: LivType.strong, weight: .semibold))
-                .foregroundStyle(LivTheme.text)
-            Text(facts.sizeWord.isEmpty ? facts.path : "\(facts.sizeWord) · \(facts.path)")
-                .font(.system(size: LivType.label, design: .monospaced))
-                .foregroundStyle(LivTheme.text3)
-                .lineLimit(2)
-                .truncationMode(.head)
+            ConfirmPill("Open", compact: true) { open(place) }
         }
         .padding(11)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -205,11 +155,6 @@ struct FileBody: View {
                 .onChange(of: nameFocused) { _, now in
                     if !now { commitName() }
                 }
-            // No "Open in…" here any more (owner, 2026-08-13). Handing
-            // the bytes to the app that owns the format is a SECONDARY
-            // verb, and secondary verbs live in the ••• menu — the app's
-            // own rule. It was the only button on the screen, which made
-            // a file look like something you could not read.
             HStack(spacing: 8) {
                 LivIcon(glyph: .file(facts.fileClass), color: LivTheme.text2, size: 22)
                 if !facts.format.isEmpty { ValueChip(facts.format) }
@@ -217,95 +162,65 @@ struct FileBody: View {
             }
         }
         .padding(.horizontal, 16)
-        // CLEAR THE CHROME, the way every other surface does. This was a
-        // raw 56, which was the whole band back when the screen stopped
-        // at the safe area. Surfaces run under the status bar now
-        // (2026-08-17), so the band is `LivSafeArea.top + topChrome` —
-        // about 111 on a notched phone. At 56 the name field was drawn
-        // UNDER the library door and the •••, and a file with no name
-        // yet showed its placeholder there too: the screen read as a
-        // file with no name at all (owner, 2026-09-06, from a device).
+        // Clear the chrome, the way every other surface does.
         .padding(.top, LivRow.topInset)
         .padding(.bottom, 12)
     }
 
-    /// The reference points at nothing. Say so plainly and keep the
-    /// entity — its filing is still real, and the file may come back.
-    private func brokenCard(_ facts: FileFacts) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("The file has moved or been deleted")
-                .font(.system(size: LivType.strong, weight: .semibold))
-                .foregroundStyle(LivTheme.text)
-            Text(facts.path)
-                .font(.system(size: LivType.label, design: .monospaced))
-                .foregroundStyle(LivTheme.text3)
-                .lineLimit(2)
-                .truncationMode(.head)
-        }
-        .padding(11)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.surface))
-        .overlay(
-            RoundedRectangle(cornerRadius: LivTheme.radius)
-                .strokeBorder(LivTheme.red.opacity(0.5), lineWidth: 0.5)
-        )
-        .padding(.horizontal, 16)
-        .padding(.bottom, 8)
+    /// The file is not where the box last saw it. Say so plainly and keep
+    /// the entity — its filing is still real, and the file may come back.
+    private var brokenCard: some View {
+        Text("The file has moved or been deleted")
+            .font(.system(size: LivType.strong, weight: .semibold))
+            .foregroundStyle(LivTheme.text)
+            .padding(11)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.surface))
+            .overlay(
+                RoundedRectangle(cornerRadius: LivTheme.radius)
+                    .strokeBorder(LivTheme.red.opacity(0.5), lineWidth: 0.5)
+            )
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
     }
 
     // MARK: arrival
 
-    /// Opening a file is when Liv catches up with whatever edited it —
-    /// a re-hash, once, here. No watcher and no timer: the core's own
-    /// rule, and the only moment the answer matters.
+    /// Opening a file is when Liv catches up with it — a re-hash, once,
+    /// here, which also says where it is and how big. A file that holds
+    /// words becomes a note now, and the tab redraws as one.
     private func arrive() {
         if !seeded {
             name = storedName
             seeded = true
         }
-        guard !resynced else { return }
-        resynced = true
-        if becomeNote() { return }
-        box.resyncFile(id)
-    }
-
-    /// A markdown file added BEFORE the rule above existed is still a
-    /// file reference in the box. Opening it converts it, once: the words
-    /// move in, the file cell comes off, and the tab redraws as the note
-    /// it should always have been. Nothing is lost — the log keeps every
-    /// version, and the file on disk is never written.
-    private func becomeNote() -> Bool {
-        guard let row = box.entity(id), let facts = FileFacts.of(row),
-            NoteBytes.isNote(facts.format), facts.exists,
-            let text = NoteBytes.read(facts.url)
-        else { return false }
-        converting = true
-        let stored = storedName
-        box.content(id) { doc in
-            box.setContent(
-                id, spansJson: SpanText.json(SpanText.textToSpans(text)),
-                base: doc?.fingerprint ?? 0
-            ) { status, _ in
-                guard status == 1 else {
-                    converting = false
+        guard !asked else { return }
+        asked = true
+        box.resyncFile(id) { answer in
+            guard let answer, answer.state != "broken", let path = answer.path else {
+                place = answer ?? LivResync(state: "broken")
+                return
+            }
+            box.fileText(path) { found in
+                guard let text = found?.text else {
+                    place = answer
                     return
                 }
-                // The name loses its extension with the file: every note
-                // is markdown, so ".md" in the name says nothing.
-                box.set(id, "name", NoteBytes.name(of: stored))
-                box.unset(id, "format")
-                box.unset(id, "file")
+                FileWords.spans(text, box: box) { spans in
+                    box.fileIntoNote(id, spansJson: spans) { ok in
+                        if !ok { place = answer }
+                    }
+                }
             }
         }
-        return true
     }
 
-    /// The name cell, and the rules for writing it — `LivName`
-    /// (Kit.swift) since 2026-09-07. This was the FOURTH hand-written
-    /// copy of the same grammar (the desk's title, the record card, this
-    /// tab, and a fifth was about to be written for the properties
-    /// card); they had already drifted, and only the desk's carried the
-    /// trashed-entity guard.
+    private func open(_ place: LivResync) {
+        guard let path = place.path else { return }
+        desk.share = SharePayload(items: [URL(fileURLWithPath: path)])
+    }
+
+    /// The name cell, and the rules for writing it — `LivName` (Kit.swift).
     private var storedName: String { LivName.stored(box.entity(id)) }
 
     private func commitName() {
@@ -321,185 +236,93 @@ struct FileBody: View {
     }
 }
 
-// MARK: - the bytes that are not foreign at all
+// MARK: - words into a note
 
-/// Markdown is not a foreign format — it is what a note IS. A .md file
-/// added to Liv therefore becomes a NOTE, with its words in the box:
-/// editable, searchable, rendered, versioned like everything else. It
-/// does not become a file reference with a read-only preview beside an
-/// "Open in…" button, which is what it used to do (owner, 2026-08-13:
-/// "totally broken … .md should work like any note").
-///
-/// This is NOT in-app editing of foreign bytes, the thing the product
-/// refuses. Nothing writes back to the file: its words are copied into
-/// the box once, at the door, and the file goes its own way.
-///
-/// UTF-8 only (owner, 2026-08-11). Bytes that are not UTF-8 are not text
-/// we can honestly claim to hold, so they stay a file.
-enum NoteBytes {
-    /// Markdown only. Deliberately narrow: `.txt` is somebody else's
-    /// text file, and `.tex`/`.bib` are SOURCE for another program —
-    /// swallowing a thesis into the box the first time it was added is
-    /// the opposite of what files are for. Markdown is the one format
-    /// that IS a note.
-    static let formats: Set<String> = ["md", "markdown"]
-
-    static func isNote(_ format: String) -> Bool {
-        formats.contains(format.lowercased())
-    }
-
-    /// The words, or nil when they are not UTF-8 text.
-    static func read(_ url: URL) -> String? {
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    /// The name a person reads: the file name with its extension off.
-    /// "Linux Installation.md" is a note called "Linux Installation" —
-    /// every note is markdown, so saying so in the name is noise.
-    static func name(of fileName: String) -> String {
-        let stem = (fileName as NSString).deletingPathExtension
-        return stem.isEmpty ? fileName : stem
-    }
-
-    /// Land text as a real note: born, named, then filled in one pass.
-    /// The content write is a compare-and-swap like every other, so the
-    /// fresh note's own fingerprint is read back first.
-    static func land(
-        _ text: String, named: String, box: BoxModel,
-        done: @escaping (LivEntityID) -> Void
-    ) {
-        box.createNote { id in
-            guard !id.isAbsent else { return done(.absent) }
-            if !named.isEmpty { box.set(id, "name", named) }
-            box.content(id) { doc in
-                let spans = SpanText.textToSpans(text)
-                box.setContent(
-                    id, spansJson: SpanText.json(spans),
-                    base: doc?.fingerprint ?? 0
-                ) { _, _ in
-                    // THE NOTE LANDED EVEN IF ITS BODY DID NOT. It was
-                    // created and named two lines up, so it exists and
-                    // the caller has to hear about it — an id withheld
-                    // here is a note nobody can find, and `adopt` would
-                    // also never reach its count and never open
-                    // anything. A failed body write reports itself
-                    // through the write path.
-                    //
-                    // This read `status == 1 ? id : id` — a ternary with
-                    // one answer, left by a sweep that replaced the `0`
-                    // arm when ids stopped being numbers.
-                    done(id)
-                }
-            }
+/// A file's words as a note's spans: the one markdown reader
+/// (`SpanText.textToSpans`), off the main thread for a long file. A link
+/// in the words counts only if this box knows its target — read on the
+/// main thread first, since the box's index is the main thread's.
+enum FileWords {
+    static func spans(_ text: String, box: BoxModel, done: @escaping (String) -> Void) {
+        let known = Set(box.entities.keys)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let json = SpanText.json(SpanText.textToSpans(text, isKnown: { known.contains($0) }))
+            DispatchQueue.main.async { done(json) }
         }
     }
 }
 
 // MARK: - where the bytes live on a phone
 
-/// A phone cannot keep a reference to a file it does not own.
-///
-/// The picker hands back a path inside another app's container (iCloud
-/// Drive, Files, Dropbox…), readable only for the length of that one
-/// callback. Recording that path produces an entity whose file is
-/// "moved or deleted" the moment you look at it again — verified live,
-/// 2026-08-09.
-///
-/// So a phone import COPIES, exactly as the camera already does
-/// (Camera.swift's CameraStore). Liv's copy becomes the truth and the
-/// original goes its own way; the import says so out loud. On the
-/// desktop, where paths are stable and the user owns their folders, the
-/// same core verb records the path in place — that is the difference
-/// between the two, and it lives here rather than in the core.
+/// A phone cannot keep a reference to a file it does not own: the picker
+/// hands back a path inside another app's container, readable only for
+/// that one callback (verified live, 2026-08-09). So the phone COPIES,
+/// beside the box, and Liv's copy becomes the truth.
 enum FileStore {
-    /// Copy into <Application Support>/liv/files/<uuid>.<ext> and
-    /// return the new path. Nil when the bytes cannot be read.
-    static func adopt(_ source: URL) -> String? {
-        let scoped = source.startAccessingSecurityScopedResource()
-        defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+    /// Copy into `<box folder>/files/<uuid>/<the file's own name>`, built
+    /// from the very string the box was opened with — that is what lets the
+    /// box remember it relative to itself. Nil when it cannot be copied.
+    static func adopt(_ source: URL, box: BoxModel) -> String? {
+        let folder = ((box.path as NSString).deletingLastPathComponent as NSString)
+            .appendingPathComponent("files/\(UUID().uuidString)")
+        let target = (folder as NSString).appendingPathComponent(source.lastPathComponent)
         do {
-            let dir = try directory()
-            // The name is kept for the extension only — the box holds
-            // the name a person reads, and renaming there must never
-            // touch a file on disk.
-            let ext = source.pathExtension
-            var url = dir.appendingPathComponent(UUID().uuidString)
-            if !ext.isEmpty { url = url.appendingPathExtension(ext) }
-            let bytes = try Data(contentsOf: source)
-            try bytes.write(to: url, options: .atomic)
-            return url.path
+            try FileManager.default.createDirectory(
+                atPath: folder, withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: source, to: URL(fileURLWithPath: target))
+            return target
         } catch {
+            try? FileManager.default.removeItem(atPath: folder)
             return nil
         }
     }
 
-    private static func directory() throws -> URL {
-        let base = FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        )[0]
-        .appendingPathComponent("liv", isDirectory: true)
-        .appendingPathComponent("files", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: base, withIntermediateDirectories: true)
-        return base
+    /// A copy the box did not take: its folder goes.
+    static func discard(_ copy: String) {
+        try? FileManager.default.removeItem(atPath: (copy as NSString).deletingLastPathComponent)
     }
 }
 
 // MARK: - the door
 
-/// What one pick turned out to be: Liv's own words, or foreign bytes.
-private enum Pick {
-    case note(text: String, name: String)
-    case file(path: String, name: String)
-}
-
-/// The import, lowered to one function. It was a BUTTON (the New Tab
-/// page's file door); that page is gone (owner, 2026-08-13) and the door
-/// is a row in the `+` menu, so the picker itself is presented by
-/// whoever hosts the menu and this is the part that was worth keeping.
+/// The `+` menu's File row, after the picker. Each pick lands as its own
+/// thing, stamped by the active workspace like every other creation door;
+/// when every pick has answered, the last one that landed opens.
 enum FileImport {
-    /// Each pick lands as its own entity, stamped by the active
-    /// workspace exactly as every other creation door stamps — so things
-    /// dropped while standing in a project arrive already filed. The
-    /// last one opens.
-    ///
-    /// Markdown becomes a NOTE (NoteBytes); everything else is copied in
-    /// and referenced as a file.
     static func adopt(
         _ urls: [URL], box: BoxModel, workspaces: WorkspaceModel, desk: DeskModel
     ) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let picks: [Pick] = urls.compactMap { url in
-                let name = url.lastPathComponent
-                if NoteBytes.isNote(url.pathExtension), let text = NoteBytes.read(url) {
-                    return .note(text: text, name: NoteBytes.name(of: name))
-                }
-                return FileStore.adopt(url).map { .file(path: $0, name: name) }
+        var answered = 0
+        var landed: [LivEntityID] = []
+        func finish(_ id: LivEntityID) {
+            answered += 1
+            if id.isAbsent {
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+            } else {
+                workspaces.stamp(id, in: box)
+                landed.append(id)
             }
-            DispatchQueue.main.async {
-                var landed: [LivEntityID] = []
-                let finish: (LivEntityID) -> Void = { id in
-                    guard !id.isAbsent else { return }
-                    workspaces.stamp(id, in: box)
-                    landed.append(id)
-                    if landed.count == picks.count, let last = landed.last {
-                        desk.open(last)
+            if answered == urls.count, let last = landed.last { desk.open(last) }
+        }
+        for url in urls {
+            // Open for as long as Rust reads it, or the copy is made.
+            let scoped = url.startAccessingSecurityScopedResource()
+            let close = { if scoped { url.stopAccessingSecurityScopedResource() } }
+            box.fileText(url.path) { found in
+                if let text = found?.text {
+                    close()
+                    FileWords.spans(text, box: box) { spans in
+                        box.makeNote(name: found?.name, spansJson: spans, done: finish)
                     }
+                    return
                 }
-                for pick in picks {
-                    switch pick {
-                    case .note(let text, let name):
-                        NoteBytes.land(text, named: name, box: box, done: finish)
-                    case .file(let path, let name):
-                        box.addFile(path) { id in
-                            guard !id.isAbsent else { return }
-                            // The copy is named by a random id on disk;
-                            // the name a person reads is the one they
-                            // picked.
-                            box.set(id, "name", name)
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let copy = FileStore.adopt(url, box: box)
+                    close()
+                    DispatchQueue.main.async {
+                        guard let copy else { return finish(.absent) }
+                        box.addFile(copy) { id in
+                            if id.isAbsent { FileStore.discard(copy) }
                             finish(id)
                         }
                     }

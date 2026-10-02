@@ -27,7 +27,7 @@ import UIKit
 final class PanelPanRecognizer: UIGestureRecognizer {
     /// Veto at touch time, BEFORE any movement: is the desk the active
     /// surface, and is this a place a panel drag may start (not a
-    /// horizontal scroller, not text-selection chrome)?
+    /// horizontal scroller, not the month pager)?
     var mayStart: (CGPoint) -> Bool = { _ in true }
     /// Veto at latch time: is there a panel to claim in this direction?
     var mayClaim: (CGFloat) -> Bool = { _ in true }
@@ -37,6 +37,7 @@ final class PanelPanRecognizer: UIGestureRecognizer {
     /// Points per second, from the last two samples — the flick test.
     private(set) var velocityX: CGFloat = 0
     private var lastSample: (time: TimeInterval, x: CGFloat)?
+    private weak var touch: UITouch?
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         guard state == .possible, touches.count == 1, let touch = touches.first,
@@ -51,6 +52,7 @@ final class PanelPanRecognizer: UIGestureRecognizer {
             return
         }
         startPoint = p
+        self.touch = touch
         translationX = 0
         velocityX = 0
         lastSample = (touch.timestamp, p.x)
@@ -82,6 +84,8 @@ final class PanelPanRecognizer: UIGestureRecognizer {
                     return
                 }
                 translationX = dx
+                // May wait here for a row's own swipe to fail first
+                // (`shouldRequireFailureOf`); `letGo` runs once it began.
                 state = .began
             }
         case .began, .changed:
@@ -89,6 +93,21 @@ final class PanelPanRecognizer: UIGestureRecognizer {
             state = .changed
         default:
             break
+        }
+    }
+
+    /// THE SWIPE IS THE PANEL'S NOW. A list or a note under the finger
+    /// also took it, and scrolled with the thumb's drift while the panel
+    /// moved, then coasted on (owner, 2026-10-01: "no scrolling as you
+    /// swipe"). Every pan under the finger lets go: the scroll's, and a
+    /// row's swipe the edge overruled. Called at `.began`, not at the latch
+    /// — a pan cancelled while the panel still waited on it would count as
+    /// failed and let the panel through.
+    func letGo() {
+        for g in touch?.gestureRecognizers ?? []
+        where g !== self && g is UIPanGestureRecognizer && g.view is UIScrollView {
+            g.isEnabled = false
+            g.isEnabled = true
         }
     }
 
@@ -105,6 +124,7 @@ final class PanelPanRecognizer: UIGestureRecognizer {
         translationX = 0
         velocityX = 0
         lastSample = nil
+        touch = nil
     }
 }
 
@@ -153,22 +173,16 @@ struct PanelDragInstaller: UIViewRepresentable {
         var onEnd: (CGFloat, CGFloat) -> Void = { _, _ in }
         weak var window: UIWindow?
 
-        /// Places a panel drag must not start:
-        /// - inside a HORIZONTALLY scrollable area (the editor's
-        ///   toolbar, chip rows) — a horizontal gesture there is that
-        ///   view's scroll;
-        /// - on text-selection chrome (handles, the loupe) — extending a
-        ///   selection across a line must never move a panel, the
-        ///   guarantee the old flick gate gave (audit, 2026-08-04).
+        /// Places a panel drag must not start: inside a HORIZONTALLY
+        /// scrollable area (the editor's toolbar, chip rows) — a horizontal
+        /// gesture there is that view's scroll.
         func startAllowed(_ point: CGPoint) -> Bool {
             guard active(), let window else { return false }
             // The screen's edges belong to the panels, whatever sits
             // under them — a file tab is one full-bleed zoomable
             // preview, and without this a panel could not be dragged in
             // at all while one was open (found live, 2026-08-09).
-            if point.x < 24 || point.x > window.bounds.width - 24 {
-                return true
-            }
+            if atEdge(point) { return true }
             // A SURFACE THAT PAGES SIDEWAYS KEEPS ITS OWN SIDEWAYS
             // DRAGS.
             //
@@ -188,14 +202,14 @@ struct PanelDragInstaller: UIViewRepresentable {
             let zone = pagerZone()
             if !zone.isEmpty, zone.contains(point) { return false }
 
+            // NO TEXT-SELECTION CHECK BY CLASS NAME any more. It vetoed any
+            // view whose class name held "Selection", and SwiftUI's List
+            // host is `…SelectionManagerBox…` — so a drag on any list (Today,
+            // Tasks, Notes, Unsorted) never opened the panel, only one from
+            // the edge did (found 2026-10-01). Selecting text means editing,
+            // and the claim refuses a drag while anything is being edited.
             var view = window.hitTest(point, with: nil)
             while let v = view {
-                let name = String(describing: type(of: v))
-                if name.contains("Selection") || name.contains("Loupe")
-                    || name.contains("Magnif")
-                {
-                    return false
-                }
                 if let scroll = v as? UIScrollView,
                     scroll.contentSize.width > scroll.bounds.width + 1
                 {
@@ -204,6 +218,31 @@ struct PanelDragInstaller: UIViewRepresentable {
                 view = v.superview
             }
             return true
+        }
+
+        /// The outer 24pt of the screen, in window coordinates.
+        func atEdge(_ point: CGPoint) -> Bool {
+            guard let window else { return false }
+            return point.x < 24 || point.x > window.bounds.width - 24
+        }
+
+        /// A ROW'S OWN SWIPE COMES FIRST. A list row with swipe actions
+        /// (Today's and Tasks' Tonight · Tomorrow · Pick, a trailing
+        /// Trash) has its own sideways pan; run alongside it, the panel
+        /// opened AND the row's actions slid out (review, 2026-10-02). So
+        /// the panel waits for that pan to fail, which it does at once on a
+        /// row with no action in that direction — and from the edge, which
+        /// is the panel's, it does not wait.
+        func gestureRecognizer(
+            _ g: UIGestureRecognizer,
+            shouldRequireFailureOf other: UIGestureRecognizer
+        ) -> Bool {
+            guard let list = other.view as? UIScrollView,
+                list is UICollectionView || list is UITableView,
+                other is UIPanGestureRecognizer,
+                other !== list.panGestureRecognizer
+            else { return false }
+            return !atEdge(g.location(in: nil))
         }
 
         /// MUST be true — refusing simultaneity starves the scroll pans
@@ -222,6 +261,7 @@ struct PanelDragInstaller: UIViewRepresentable {
         @objc func handle(_ g: PanelPanRecognizer) {
             switch g.state {
             case .began:
+                g.letGo()
                 onLatch(g.translationX)
             case .changed:
                 onMove(g.translationX)

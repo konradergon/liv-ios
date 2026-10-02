@@ -1027,10 +1027,11 @@ func livGlyphSelfCheck() -> [String] {
     // hex id would bury it.
     func row(
         _ n: UInt64, kinds: [String]? = nil, status: String? = nil,
-        cells: [CellRow]? = nil
+        cells: [CellRow]? = nil, hasFile: Bool? = nil
     ) -> EntityRow {
         EntityRow(
-            id: livSampleId(n), title: "t", kinds: kinds, status: status, cells: cells)
+            id: livSampleId(n), title: "t", kinds: kinds, status: status, cells: cells,
+            hasFile: hasFile)
     }
 
     // 1. ONE classifier — colour and glyph never disagree.
@@ -1053,15 +1054,18 @@ func livGlyphSelfCheck() -> [String] {
         ("link", row(7, kinds: ["link"]), .link),
         ("nothing at all", row(8), .capture),
         (
-            // A file is marked by a cell of KIND "file" (FileFacts.of),
-            // not by a property name — the first draft of this test got
-            // that wrong and the check caught it.
+            // A file is what Rust says has one (`has_file`), not a cell's
+            // value: that value is the content's fingerprint, and reading it
+            // as a path is how every file came to read "moved or deleted"
+            // (2026-10-01).
             "file beats everything",
             row(
                 10, kinds: ["note"],
-                cells: [CellRow(property: "file", kind: "file", value: "/tmp/a.pdf")]),
+                cells: [CellRow(property: "format", word: "format", kind: "text", value: "pdf")],
+                hasFile: true),
             .file
         ),
+        ("a file before its cells arrive", row(11, kinds: ["file"], hasFile: true), .file),
     ]
     for (name, r, want) in cases {
         let got = LivKind.of(r)

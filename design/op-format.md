@@ -261,9 +261,12 @@ everything from it is dropped. **Nothing is ever guessed at or repaired.**
 - **No field names, ever.** That is the point.
 - **No schema evolution beyond the version byte.** A new grammar is a new version, and
   old decoders refuse rather than degrade.
-- **Photo and file bytes.** Content-addressed beside the log. Note that `FileRef`
-  today carries a **device-local path**, which does not survive a device boundary —
-  that is a model bug, recorded in `core.md` §14.
+- **Photo and file bytes, and where a file is.** A file's cell holds its content
+  hash (`Blob`, never a path). Where it sits is a row in the box's device-local
+  `places` table — not in the log, not in the digest, not rebuilt by replay —
+  stored **relative to the box's folder** when the file is inside it, so a moved
+  box or a reinstalled app still finds it, and whole otherwise. (`core/`'s
+  `FileRef` carried the path in the log: the model bug recorded in `core.md` §14.)
 
 ---
 

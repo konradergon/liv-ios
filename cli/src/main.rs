@@ -36,6 +36,7 @@ MAKING THINGS
                                          named for the first time is minted, as
                                          the app's picker does. Prints the id.
   capture TEXT...                        catch words as an unsorted scrap
+  note [--name NAME] TEXT...             a note with its words, in one action
   option PROP NAME...                    mint a value of a property (an area…)
   field NAME HOLDS [--many]              declare a field (text, number, bool,
                                          datetime, reference, richtext, file)
@@ -45,6 +46,7 @@ CHANGING THINGS
   set ID PROP VALUE...   add ID PROP VALUE...   remove ID PROP VALUE...
   unset ID PROP          trash ID               restore ID...  (several: one undo)
   content-set ID TEXT... replace a body with plain text
+  into-note ID           turn a file that holds text into a note of its words
   rename-value PROP OLD NEW
   undo | redo
   accept ID PRINT        decline ID PRINT       (a suggestion from `inbox`)
@@ -63,6 +65,8 @@ READING
   snapshot               one refresh: the reads the app makes after a write
   history                the log, one line per transaction
   probe | file-alerts    is the box readable; which files are missing
+  resync ID              where a file is, its size, and whether it changed
+  text PATH              the words in a file, or null (needs no box)
 
 An ID is the 32-hex id the app uses, or any part of one (6+ characters) that
 only one thing's id contains — the middle is what differs between things made
@@ -94,6 +98,9 @@ fn run(args: &[String]) -> Result<(), String> {
     if verb == "terms" {
         return show(call(|out| unsafe { liv_terms(c(&a.join(" ")).as_ptr(), out) })?);
     }
+    if let ("text", [file]) = (verb, a) {
+        return show(call(|out| unsafe { liv_file_text(c(file).as_ptr(), out) })?);
+    }
     let path = path.ok_or("no box: pass --box <liv.db> or set LIV_BOX")?;
     let liv = Liv { path: c(&path), file: path };
     liv.dispatch(verb, a)
@@ -118,6 +125,8 @@ impl Liv {
                 let text = c(&words.join(" "));
                 show(call(|out| unsafe { liv_capture(self.p(), text.as_ptr(), now, out) })?)
             }
+            ("note", ["--name", name, words @ ..]) => self.note(Some(name), &words.join(" ")),
+            ("note", words) => self.note(None, &words.join(" ")),
             ("option", [prop, name @ ..]) if !name.is_empty() => {
                 let (prop, name) = (self.prop(prop)?.id, c(&name.join(" ")));
                 show(call(|out| unsafe {
@@ -167,6 +176,7 @@ impl Liv {
                 show(call(|out| unsafe { liv_restore_many(self.p(), ids.as_ptr(), now, out) })?)
             }
             ("content-set", [id, text @ ..]) => self.content_set(id, &text.join(" ")),
+            ("into-note", [id]) => self.into_note(id),
             ("rename-value", [prop, old, new]) => {
                 let (prop, old, new) = (self.prop(prop)?.id, c(old), c(new));
                 show(call(|out| unsafe {
@@ -239,6 +249,10 @@ impl Liv {
             ("history", []) => self.history(),
             ("probe", []) => show(call(|out| unsafe { liv_probe_box(self.p(), out) })?),
             ("file-alerts", []) => show(call(|out| unsafe { liv_file_alerts(self.p(), out) })?),
+            ("resync", [id]) => {
+                let id = self.id(id)?;
+                show(call(|out| unsafe { liv_resync_file(self.p(), id.as_ptr(), now, out) })?)
+            }
             _ => Err(format!("unknown command or wrong arguments: {verb} {}\n\n{USAGE}", a.join(" "))),
         }
     }
@@ -278,22 +292,48 @@ impl Liv {
         Ok(())
     }
 
-    /// A body is spans; plain text is one text span. No `- [ ]` parsing
-    /// here — the editor is the one parser of that grammar (rule 4).
+    /// `content-set ID TEXT...` — a body of plain text, saved against the
+    /// body as it was just read.
     fn content_set(&self, id: &str, text: &str) -> Result<(), String> {
         let id = self.id(id)?;
         let base = call(|out| unsafe { liv_read_body(self.p(), id.as_ptr(), out) })?["print"]
             .as_u64()
             .unwrap_or(0);
-        let spans = if text.is_empty() {
-            json!([])
-        } else {
-            json!([{ "Text": { "text": text, "marks": 0 } }])
-        };
-        let spans = c(&spans.to_string());
+        let spans = c(&plain_spans(text).to_string());
         show(call(|out| unsafe {
             liv_write_body(self.p(), id.as_ptr(), spans.as_ptr(), base, now_ms(), out)
         })?)
+    }
+
+    /// `note [--name NAME] TEXT...` — one `liv_make_note`, as the phone
+    /// makes a note of a text file it was handed.
+    fn note(&self, name: Option<&str>, text: &str) -> Result<(), String> {
+        let name = name.map(c);
+        let spans = c(&plain_spans(text).to_string());
+        show(call(|out| unsafe {
+            liv_make_note(
+                self.p(),
+                name.as_ref().map_or(std::ptr::null(), |n| n.as_ptr()),
+                spans.as_ptr(),
+                now_ms(),
+                out,
+            )
+        })?)
+    }
+
+    /// `into-note ID` — what the phone does when a file that holds text
+    /// is opened: ask where it is, ask for its words, hand them back as
+    /// the note's body.
+    fn into_note(&self, id: &str) -> Result<(), String> {
+        let id = self.id(id)?;
+        let here = call(|out| unsafe { liv_resync_file(self.p(), id.as_ptr(), now_ms(), out) })?;
+        let path = here["path"]
+            .as_str()
+            .ok_or("not a file, or a file this device has no copy of")?;
+        let words = call(|out| unsafe { liv_file_text(c(path).as_ptr(), out) })?;
+        let text = words["text"].as_str().ok_or_else(|| format!("{path} does not hold text"))?;
+        let spans = c(&plain_spans(text).to_string());
+        status(unsafe { liv_file_into_note(self.p(), id.as_ptr(), spans.as_ptr(), now_ms()) })
     }
 
     /// Everything the Notes list could show, as a table: id, kind, title,
@@ -514,6 +554,25 @@ fn show(v: J) -> Result<(), String> {
 
 fn c(s: &str) -> CString {
     CString::new(s.replace('\0', "")).expect("no NUL left")
+}
+
+/// Plain text as a body: each line a text run, each newline a paragraph
+/// break — a `Text` never holds a newline (`rich.rs`). No `- [ ]` or `#`
+/// is read here; the editor is the one parser of that grammar.
+/// The newline that ends a file's last line ends it; it is not a blank
+/// paragraph after it.
+fn plain_spans(text: &str) -> J {
+    let text = text.strip_suffix('\n').unwrap_or(text);
+    let mut spans = Vec::new();
+    for (i, line) in text.split('\n').enumerate() {
+        if i > 0 {
+            spans.push(json!({ "Break": "Body" }));
+        }
+        if !line.is_empty() {
+            spans.push(json!({ "Text": { "text": line, "marks": 0 } }));
+        }
+    }
+    J::Array(spans)
 }
 
 // ---- time ---------------------------------------------------------------

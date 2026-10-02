@@ -13,15 +13,18 @@ product page is `design/what-liv-is-for.md`.
 
 ## 2. Where things stand
 
-- **Branch** `polish-pass-lmkl30`, pushed up to `d30b9d1` (the owner's
-  pre-sync UI list). Uncommitted: web links in notes, and made names on
-  the phone's clock (changelog, 1 Oct).
+- **Branch** `polish-pass-lmkl30`, pushed (2 Oct) with the plan's first
+  batch (changelog, 1–2 Oct): underscore emphasis and quote bars, the
+  title flash, the panel, search, headings, the `#` setting, the camera
+  for scanning only, files as notes, the review's fixes, the × that takes
+  a value off, bigger heading steps and a heading key that cycles all six.
 - **Every screen reads Rust's answers**; Swift draws. A refresh reads the
   library and the screen on show, nothing else. The clerk's sweep is
   linear again. Reminders are Rust's too (`liv_view_reminders`). The
-  door (`ffi/liv.h`) has 49 functions.
-- **Checks**: `cargo test` 388. `suites.sh` 13/13. Every `drive.sh` check
-  passes (1 Oct); `cycles` is a report, not a check. Checks that need
+  door (`ffi/liv.h`) has 52 functions (`liv_file_text`, `liv_make_note`
+  and `liv_file_into_note` added 2 Oct).
+- **Checks**: `cargo test` 429. `suites.sh` 13/13. Every `drive.sh` check
+  passes (2 Oct); `cycles` is a report, not a check. Checks that need
   something on screen make it through the CLI (`seed`) and trash it after.
 - **Gone with `core/` on 29 Sep, not rebuilt**: repeating events,
   import/export, the folder "vault", habits, time tracking, pins, daily
@@ -81,8 +84,11 @@ itself. Rows draw their own piece of the card (`livCardRow(position:)`).
 built in. The clerk only suggests ("Work?"), one tap accepts, and never
 acts on its own. No templates, no typed-query language (filters are
 picked, never typed), no "advanced" features, no Quick Capture sheet, no
-parsing of typed text, no file preview (a `.md` file is a note; other
-files show name, size and path, and open elsewhere). No explaining text
+parsing of typed text, no file preview. A file that holds text IS a note
+(owner, 1 Oct): added, it arrives as one; an older one becomes one when
+opened; the file itself is never written. Any other file shows its name,
+what it is, its size and Open. The camera scans text and does nothing
+else. No explaining text
 in the app: labels say what things are, empty states are a few words.
 The box's data is all test data (13 Sep) — change anything but how the
 interface looks.
@@ -96,7 +102,9 @@ the foot.
 
 **Library panel.** Not full screen. Views, then Workspaces, All
 workspaces, New workspace; Trash and Settings at the foot. Saved filters
-are gone.
+are gone. It slides in from anywhere while nothing is being edited, and
+nothing under it scrolls; on a row with its own swipe (Today, Tasks) the
+row's swipe wins, and the screen's edge is always the panel's.
 
 **Today.** Today's weekday, the date and a count per area; late items
 (folded when more than three); the day as one schedule card with a red
@@ -110,11 +118,18 @@ late. Due times default to 09:00; reminders ring at the due time.
 included. Filing asks where first; other kinds sit behind "Not a note…".
 It ignores the workspace, so nothing made in the wrong one vanishes.
 
-**Notes and the editor.** Markdown syntax shows only on the caret's line;
-links show as their name. Making a link opens Search. Web addresses and
+**Notes and the editor.** The owner, 2 Oct: keep this editor (our own, on
+the iPhone's text view) and fix its problems; CodeMirror is off for now.
+Markdown syntax shows only on the caret's line,
+except a heading's `#`, which shows dimmed on every line unless Settings
+turns it off; links show as their name. Making a link opens Search. Web addresses and
 `[text](url)` are links too, stored as typed; a tap opens Safari (a
-long press still places the caret). Six heading sizes, `#` largest to
-`######` at body size; seven `#` is text. A code block is monospace on a
+long press still places the caret). `_x_`, `__x__` and `___x___` are
+italic, bold and both, at a word's edges only (`snake_case` stays
+words). Quotes and callouts wear a bar down the margin. Six heading sizes,
+2.5pt apart: `#` at 30.5, under the note's 32pt title, down to `######`
+at the body's 18, bold; seven `#` is text. The toolbar's heading key
+cycles through all six, then none. A code block is monospace on a
 tint, nothing in it read as markdown. A nameless thing reads as its kind
 and when it was made, on the phone's clock ("Note · 29 Sep 17:26").
 History has Restore.
@@ -129,14 +144,17 @@ and nowhere else, and a tap puts it back. Counts are over what the words
 found.
 
 **Properties.** A card of its own, Settings-style; `tags` reads
-"Subject".
+"Subject". An empty field shows nothing, never "None". A row holding one
+value (Due, Status, Area, Project) has an × that takes it off; People
+and Subject are ticked and unticked in their picker.
 
 **Trash.** Newest thrown away first; put back one or many as one undo.
 Nothing is ever deleted for good.
 
 **Workspaces.** Made from pickers: Name, Area, Subject.
 
-**Settings.** Appearance, Suggestions, Reminders.
+**Settings.** Appearance (with "Show # in headings", on by default),
+Suggestions, Reminders.
 
 **Look.** Minimal, quiet, clear hierarchy, nothing system-looking: a dark
 ground, one accent, nothing loud, marks bold enough to see. Five type
@@ -158,8 +176,6 @@ gradients, area tiles, bottom fades.
 - A made name reads the phone's offset as it is NOW: across a
   daylight-saving change, a nameless thing made before it reads an hour
   off. Fixing that needs the zone's rules in Rust.
-- In notes: `_x_` and `__x__` stay literal; quotes and callouts are only
-  grey text.
 - Pages scanned sideways are read rotated.
 - Deferred by name: templates, a replacement for filters, the desktop
   shell, and everything in §2 gone with `core/`.
@@ -171,6 +187,12 @@ done. **2** `design/` cut to the living docs — done (1 Oct). **3** shorten
 the history comments in each file as it is touched — ongoing, never as a
 sweep.
 
+**Now: `design/plan.md`** — the owner's list of 1 Oct. Its first batch is
+done (2 Oct), and so is taking a value off a thing (item 12, the ×). Next:
+deleting a value itself (the area "Work"), then the editor's own problems
+as the owner finds them — the current editor stays (2 Oct). Vibrations are
+designed and wait for the phone.
+
 Then **sync**, the next stage of the engine plan.
 The engine already has ops, dots, version vectors and a hold buffer, all
 tested and unused. Ask the owner before starting sync.
@@ -179,6 +201,7 @@ tested and unused. Ask the owner before starting sync.
 
 - **Read**: `CLAUDE.md`, this file, `design/what-liv-is-for.md`,
   `design/how-its-built.md`, and the top of `design/changelog.md`.
+- **Next**: `design/plan.md` — the current plan and its open decisions.
 - **Reference**: `design/op-format.md` (the on-disk format),
   `design/testflight.md` (phones).
 - **History**: `design/archive/` — the old specs, phase docs, studies,

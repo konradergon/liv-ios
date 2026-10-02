@@ -291,8 +291,8 @@ struct EntityInspector: View {
             }
             .padding(.top, LivDetail.firstCard)
             // Zero fill pressure: the core fields are always here, even
-            // empty ("None"); everything else appears only once it holds a
-            // value (design/editor-study.md §8).
+            // empty; everything else appears only once it holds a value
+            // (design/editor-study.md §8).
             LivCard(fill: LivTheme.panel2) {
                 ForEach(Array(InspectorField.core.enumerated()), id: \.element) { i, property in
                     fieldRow(property, row, divided: i < InspectorField.core.count - 1)
@@ -400,7 +400,7 @@ struct EntityInspector: View {
         return Button {
             showDueSheet = true
         } label: {
-            DetailCardRow(label, divided: divided) {
+            DetailCardRow(label, divided: divided, clearing: row.due != nil) {
                 if let due = row.due {
                     // RED WHEN LATE — a TASK overdue and not done — which is
                     // what red means everywhere on the clearer boards. The
@@ -408,12 +408,11 @@ struct EntityInspector: View {
                     DetailValue(
                         dueWords(due, end: row.dueEnd, dateOnly: row.dueDateOnly ?? false),
                         late: row.late == true)
-                } else {
-                    DetailValue(nil)
                 }
             }
         }
         .buttonStyle(.plain)
+        .detailClear(label, when: row.due != nil) { box.unset(id, dueProperty(row)) }
     }
 
     /// The due in the app's words: "Tuesday 11:00", "Today", "18 Sep 09:00",
@@ -466,10 +465,11 @@ struct EntityInspector: View {
                     }
                 }
             } label: {
-                DetailCardRow("Status", divided: false) {
+                DetailCardRow("Status", divided: false, clearing: !(row.status ?? "").isEmpty) {
                     DetailValue(row.status)
                 }
             }
+            .detailClear("Status", when: !(row.status ?? "").isEmpty) { box.unset(id, "status") }
         }
     }
 
@@ -527,7 +527,8 @@ struct EntityInspector: View {
     }
 
     /// A core field's row: tap anywhere on it to open the one editing
-    /// sheet. Empty reads "None" — a value, never a prompt to fill it in.
+    /// sheet. Empty, it is just its name. Holding one value (area,
+    /// project), it has an × that takes the value off.
     private func fieldRow(_ property: String, _ row: EntityRow, divided: Bool) -> some View {
         let held = values(of: property, in: row)
         // THE BOX'S WORD, not the token. `property` is what this writes
@@ -538,10 +539,11 @@ struct EntityInspector: View {
         // TWO NAMES AND A COUNT beats three shortened ones.
         let shown = held.isEmpty
             ? nil : held.prefix(2).joined(separator: ", ") + (held.count > 2 ? " +\(held.count - 2)" : "")
+        let clearable = !field.multi && !held.isEmpty
         return Button {
             editing = field
         } label: {
-            DetailCardRow(label, divided: divided) {
+            DetailCardRow(label, divided: divided, clearing: clearable) {
                 if property == "people", shown != nil {
                     LivIcon(glyph: .person, color: LivTheme.text2, size: LivDetail.valueGlyph)
                 }
@@ -549,6 +551,7 @@ struct EntityInspector: View {
             }
         }
         .buttonStyle(.plain)
+        .detailClear(label, when: clearable) { box.unset(id, property) }
     }
 
     /// Anything else the entity holds. A reference opens what it names;
@@ -879,15 +882,19 @@ struct DetailCardRow<Value: View>: View {
     let label: String
     var divided = true
     var chevron = true
+    /// The chevron's place is kept empty for the × laid over it
+    /// (`detailClear`).
+    var clearing = false
     @ViewBuilder var value: Value
 
     init(
-        _ label: String, divided: Bool = true, chevron: Bool = true,
+        _ label: String, divided: Bool = true, chevron: Bool = true, clearing: Bool = false,
         @ViewBuilder value: () -> Value
     ) {
         self.label = label
         self.divided = divided
         self.chevron = chevron
+        self.clearing = clearing
         self.value = value()
     }
 
@@ -900,7 +907,11 @@ struct DetailCardRow<Value: View>: View {
                 .layoutPriority(1)
             Spacer(minLength: LivCards.trailingGap)
             HStack(spacing: LivDetail.valueGap) { value }
-            if chevron { LivChevron() }
+            if clearing {
+                Color.clear.frame(width: LivCards.chevron, height: LivCards.chevron)
+            } else if chevron {
+                LivChevron()
+            }
         }
         .padding(.horizontal, LivCards.padX)
         .padding(.vertical, LivCards.padY)
@@ -912,8 +923,9 @@ struct DetailCardRow<Value: View>: View {
     }
 }
 
-/// A property's value: text2, or "None" in text3 when there is nothing;
-/// red when it is a late date.
+/// A property's value: text2, red when it is a late date — and NOTHING
+/// when there is none (owner, 2026-10-02: "no area isn't 'None', it's just
+/// no area assigned"). The row is its name and its chevron.
 struct DetailValue: View {
     let text: String?
     var late = false
@@ -926,13 +938,50 @@ struct DetailValue: View {
     }
 
     var body: some View {
-        let empty = (text ?? "").isEmpty
-        Text(empty ? "None" : text ?? "")
-            .font(.system(size: LivType.body))
-            .foregroundStyle(empty ? LivTheme.text3 : late ? LivTheme.red : LivTheme.text2)
-            .lineLimit(lines)
-            .multilineTextAlignment(.trailing)
-            .truncationMode(.tail)
+        if let text, !text.isEmpty {
+            Text(text)
+                .font(.system(size: LivType.body))
+                .foregroundStyle(late ? LivTheme.red : LivTheme.text2)
+                .lineLimit(lines)
+                .multilineTextAlignment(.trailing)
+                .truncationMode(.tail)
+        }
+    }
+}
+
+/// TAKE THE VALUE OFF (owner, 2026-10-02: "i just want to be able to
+/// remove an area from the area field... simple"). An × where the chevron
+/// stands, on a row that holds one value; the rest of the row still opens
+/// its picker. Laid OVER the row rather than inside it, because a button
+/// inside a button's label — or a menu's — does not get its own tap.
+struct DetailClear: ViewModifier {
+    let label: String
+    let on: Bool
+    let action: () -> Void
+
+    func body(content: Content) -> some View {
+        content.overlay(alignment: .trailing) {
+            if on {
+                Button(action: action) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: LivDetail.clear))
+                        .foregroundStyle(LivTheme.text3)
+                        .frame(width: LivDetail.clearTouch, height: LivDetail.clearTouch)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Remove \(label)")
+                // The ×'s centre on the chevron's.
+                .padding(.trailing, LivCards.padX + (LivCards.chevron - LivDetail.clearTouch) / 2)
+            }
+        }
+    }
+}
+
+extension View {
+    /// An × over the row's chevron while `on`; its row passes `clearing`.
+    func detailClear(_ label: String, when on: Bool, _ action: @escaping () -> Void) -> some View {
+        modifier(DetailClear(label: label, on: on, action: action))
     }
 }
 

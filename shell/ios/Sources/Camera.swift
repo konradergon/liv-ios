@@ -1,137 +1,25 @@
-// liv iOS — the camera flow (design/ios.md §6). Shoot FIRST, tag after:
-// the entity is committed at the shutter sound (bytes → Application
-// Support/liv/photos, then liv_add_file); the tray tags while the
-// viewfinder stays live. On the simulator (no camera device) a
-// PhotosPicker stands in for the shutter — same downstream path.
+// liv iOS — the scanner (owner, 2026-10-01: "camera: scanning only"). The
+// camera reads the words on a page into a new note and keeps nothing
+// else: no photo is written, no file entity is born. On the simulator (no
+// camera device) a PhotosPicker stands in for the shutter — same path.
 // Failure = haptic buzz (the phone's beep), never an alert.
 
 import AVFoundation
-import ImageIO
 import PhotosUI
 import SwiftUI
 import UIKit
-import UniformTypeIdentifiers
-
-// MARK: - session tray rows
-
-private struct CameraShot: Identifiable {
-    let id: LivEntityID  // the committed entity — real from the shutter sound
-    let thumb: UIImage?
-}
-
-/// One chip already fired at an entity — display state only; the box
-/// holds the truth.
-private struct CameraApplied: Identifiable {
-    let property: String
-    let value: String
-    var id: String { property + ":" + value }
-}
-
-/// Tag/person are multi-valued (addCell = membership); project and area
-/// replace. Area is fixed furniture: its editor offers the six options
-/// only — no type-to-create (§10's door rule).
-private enum CameraChipKind: String, Identifiable {
-    case area, tag, project, person
-    var id: String { rawValue }
-    var property: String {
-        switch self {
-        case .area: return "area"
-        case .tag: return "tags"
-        case .project: return "project"
-        case .person: return "people"
-        }
-    }
-    var multi: Bool { self == .tag || self == .person }
-    var label: String {
-        switch self {
-        case .area: return "Area"
-        case .tag: return "Tag"
-        case .project: return "Project"
-        case .person: return "Person"
-        }
-    }
-}
 
 private enum CameraPermission { case unknown, granted, denied }
-
-// MARK: - disk: <Application Support>/liv/photos/<uuid>.heic|jpg
-
-/// Camera bytes pass through untouched (already HEIC or JPEG); picker
-/// exotics (PNG…) re-encode — HEIC where the encoder exists, else JPEG.
-private enum CameraStore {
-    static func write(_ data: Data) -> String? {
-        guard let (bytes, ext) = normalize(data) else { return nil }
-        do {
-            let dir = try directory()
-            let url = dir.appendingPathComponent(UUID().uuidString)
-                .appendingPathExtension(ext)
-            try bytes.write(to: url, options: .atomic)
-            return url.path
-        } catch {
-            return nil
-        }
-    }
-
-    private static func directory() throws -> URL {
-        let base = FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        )[0]
-        .appendingPathComponent("liv", isDirectory: true)
-        .appendingPathComponent("photos", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: base, withIntermediateDirectories: true)
-        return base
-    }
-
-    private static func normalize(_ data: Data) -> (Data, String)? {
-        if let ext = sniff(data) { return (data, ext) }
-        guard let image = UIImage(data: data) else { return nil }
-        if let heic = encodeHEIC(image) { return (heic, "heic") }
-        if let jpeg = image.jpegData(compressionQuality: 0.9) {
-            return (jpeg, "jpg")
-        }
-        return nil
-    }
-
-    private static func sniff(_ data: Data) -> String? {
-        let b = [UInt8](data.prefix(12))
-        if b.count >= 2, b[0] == 0xFF, b[1] == 0xD8 { return "jpg" }
-        if b.count >= 12, b[4...7].elementsEqual("ftyp".utf8) {
-            let brand = String(decoding: b[8...11], as: UTF8.self)
-            if ["heic", "heix", "hevc", "hevx", "mif1", "msf1"].contains(brand) {
-                return "heic"
-            }
-        }
-        return nil
-    }
-
-    /// nil where the HEVC encoder is absent (older simulators) — JPEG
-    /// fallback covers it.
-    private static func encodeHEIC(_ image: UIImage) -> Data? {
-        guard let cg = image.cgImage else { return nil }
-        let out = NSMutableData()
-        guard
-            let dest = CGImageDestinationCreateWithData(
-                out, UTType.heic.identifier as CFString, 1, nil)
-        else { return nil }
-        let options =
-            [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary
-        CGImageDestinationAddImage(dest, cg, options)
-        guard CGImageDestinationFinalize(dest) else { return nil }
-        return out as Data
-    }
-}
 
 // MARK: - the AVFoundation engine (real device only)
 
 /// Owns the session; every session/device touch rides one serial queue —
 /// the UI never blocks on camera hardware.
 private final class CameraEngine: NSObject, ObservableObject {
+    /// The back camera: pages are read with it, and the flip went with the
+    /// photo shutter.
     static var hasCamera: Bool {
-        AVCaptureDevice.default(
-            .builtInWideAngleCamera, for: .video, position: .back) != nil
-            || AVCaptureDevice.default(
-                .builtInWideAngleCamera, for: .video, position: .front) != nil
+        AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) != nil
     }
 
     let session = AVCaptureSession()
@@ -143,7 +31,6 @@ private final class CameraEngine: NSObject, ObservableObject {
     private let queue = DispatchQueue(label: "liv.camera", qos: .userInitiated)
     private let output = AVCapturePhotoOutput()
     private var device: AVCaptureDevice?
-    private var position: AVCaptureDevice.Position = .back
     private var configured = false
 
     func start() {
@@ -152,7 +39,7 @@ private final class CameraEngine: NSObject, ObservableObject {
                 self.configured = true
                 self.session.beginConfiguration()
                 self.session.sessionPreset = .photo
-                self.attach(self.position)
+                self.attach()
                 if self.session.canAddOutput(self.output) {
                     self.session.addOutput(self.output)
                 }
@@ -165,15 +52,6 @@ private final class CameraEngine: NSObject, ObservableObject {
     func stop() {
         queue.async {
             if self.session.isRunning { self.session.stopRunning() }
-        }
-    }
-
-    func flip() {
-        queue.async {
-            self.position = self.position == .back ? .front : .back
-            self.session.beginConfiguration()
-            self.attach(self.position)
-            self.session.commitConfiguration()
         }
     }
 
@@ -190,27 +68,19 @@ private final class CameraEngine: NSObject, ObservableObject {
         }
     }
 
-    /// HEIC when the pipeline offers HEVC, else the default (JPEG). The
-    /// system shutter sound fires here — the commit's audible moment.
+    /// One frame, for its words. The system shutter sound fires here.
     func shoot() {
         queue.async {
-            let settings: AVCapturePhotoSettings
-            if self.output.availablePhotoCodecTypes.contains(.hevc) {
-                settings = AVCapturePhotoSettings(
-                    format: [AVVideoCodecKey: AVVideoCodecType.hevc])
-            } else {
-                settings = AVCapturePhotoSettings()
-            }
-            self.output.capturePhoto(with: settings, delegate: self)
+            self.output.capturePhoto(with: AVCapturePhotoSettings(), delegate: self)
         }
     }
 
-    /// Queue only. Replaces the input; torch state resets with the device.
-    private func attach(_ position: AVCaptureDevice.Position) {
+    /// Queue only.
+    private func attach() {
         for input in session.inputs { session.removeInput(input) }
         guard
             let device = AVCaptureDevice.default(
-                .builtInWideAngleCamera, for: .video, position: position),
+                .builtInWideAngleCamera, for: .video, position: .back),
             let input = try? AVCaptureDeviceInput(device: device),
             session.canAddInput(input)
         else {
@@ -269,10 +139,8 @@ private struct CameraViewfinder: UIViewRepresentable {
 // MARK: - the flow
 
 struct CameraFlow: View {
-    /// Fires on Done with the session's committed entity ids, in shot
-    /// order. The chrome may open the last one as a desk tab; the flow
-    /// itself never leaves the viewfinder mid-session.
-    var onDone: (([LivEntityID]) -> Void)? = nil
+    /// Fires with the note a scan made; the chrome opens it.
+    var onDone: ((LivEntityID) -> Void)? = nil
 
     @EnvironmentObject var model: BoxModel
     @EnvironmentObject var workspaces: WorkspaceModel
@@ -281,24 +149,13 @@ struct CameraFlow: View {
     @StateObject private var engine = CameraEngine()
 
     @State private var permission: CameraPermission = .unknown
-    @State private var shots: [CameraShot] = []
-    @State private var target: LivEntityID = .absent
-    @State private var caption = ""
-    @State private var captions: [LivEntityID: String] = [:]
-    @State private var applied: [LivEntityID: [CameraApplied]] = [:]
-    @State private var applyAll = false
-    @State private var adding: CameraChipKind?
-    @State private var chipText = ""
-    @State private var suggestions: [String] = []
-    @State private var pickerItem: PhotosPickerItem?
-    /// Scan text: the shutter's sibling. `scanning` is true while Vision
-    /// is working; `scanSaid` is the one line the tray shows when a
-    /// photograph turned out to have no words in it.
+    /// True while Vision is reading; `said` is the one line shown when a
+    /// page turned out to have no words on it.
     @State private var scanning = false
-    @State private var scanSaid = ""
-    @State private var scanPickerItem: PhotosPickerItem?
-    /// Which intent pressed the shutter. Consumed by the next frame.
-    @State private var wantsScan = false
+    @State private var said = ""
+    /// Close was pressed: whatever the reader finds after that is dropped.
+    @State private var closed = false
+    @State private var pickerItem: PhotosPickerItem?
 
     private let hasCamera = CameraEngine.hasCamera
 
@@ -312,25 +169,19 @@ struct CameraFlow: View {
                 topBar
                 Spacer()
                 if hasCamera, permission == .denied { deniedHint }
-                tray
+                shutterRow
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 10)
             }
         }
         .environment(\.colorScheme, .dark)  // controls float on a black ground
         .onAppear { begin() }
-        .onDisappear { engine.stop() }
-        .onChange(of: pickerItem) { _, item in
-            guard let item else { return }
-            Task {
-                if let data = try? await item.loadTransferable(type: Data.self) {
-                    ingest(data)
-                } else {
-                    CameraFlow.buzz()
-                }
-                pickerItem = nil
-            }
+        .onDisappear {
+            closed = true
+            engine.stop()
         }
-        // The same stand-in, routed to the scanner instead of the filer.
-        .onChange(of: scanPickerItem) { _, item in
+        // The simulator's stand-in for the shutter.
+        .onChange(of: pickerItem) { _, item in
             guard let item else { return }
             Task {
                 if let data = try? await item.loadTransferable(type: Data.self) {
@@ -338,63 +189,47 @@ struct CameraFlow: View {
                 } else {
                     CameraFlow.buzz()
                 }
-                scanPickerItem = nil
+                pickerItem = nil
             }
         }
     }
 
-    // MARK: top bar — torch/flip only where a camera exists; Done = exit
+    // MARK: top bar — the torch where there is one, and the way out
 
     private var topBar: some View {
         HStack(spacing: 10) {
-            if hasCamera, permission == .granted {
-                if engine.canTorch {
-                    roundButton(engine.torchOn ? "bolt.fill" : "bolt.slash") {
-                        engine.toggleTorch()
-                    }
-                }
-                roundButton("arrow.triangle.2.circlepath.camera") {
-                    engine.flip()
+            if hasCamera, permission == .granted, engine.canTorch {
+                roundButton(engine.torchOn ? "bolt.fill" : "bolt.slash", "Torch") {
+                    engine.toggleTorch()
                 }
             }
             Spacer()
-            Button {
-                commitCaption()
-                onDone?(shots.map(\.id))
+            roundButton("xmark", "Close") {
+                closed = true
                 dismiss()
-            } label: {
-                Text("Done")
-                    .font(.system(size: LivType.body, weight: .semibold))
-                    .foregroundStyle(LivTheme.onAccent)
-                    .padding(.horizontal, 14)
-                    .frame(height: 30)
-                    .background(Capsule().fill(LivTheme.accent))
             }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 14)
         .padding(.top, 8)
     }
 
-    private func roundButton(_ symbol: String, action: @escaping () -> Void)
-        -> some View
-    {
+    private func roundButton(
+        _ symbol: String, _ label: String, action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: LivType.strong, weight: .medium))
                 .foregroundStyle(LivTheme.cameraInk)
-                .frame(width: 32, height: 32)
+                .frame(width: LivCamera.control, height: LivCamera.control)
                 .background(LivTheme.cameraChrome, in: Circle())
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 
     private var deniedHint: some View {
         VStack(spacing: 2) {
-            // A BLOCKED state, not an empty one — and its remedy is the
-            // button directly under it. The sentence explaining when the
-            // shutter commits was teaching at the worst possible moment.
             EmptyHint("Camera is off")
             Button("Open Settings") {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
@@ -407,309 +242,49 @@ struct CameraFlow: View {
         .padding(.bottom, 12)
     }
 
-    // MARK: tray — thumbnails, caption, chips; the viewfinder stays live
+    // MARK: the shutter — one control, and it reads
 
-    private var tray: some View {
-        VStack(spacing: 8) {
-            if adding != nil { chipEditor }
-            if !shots.isEmpty { trayPanel }
-            shutterRow
-        }
-        .padding(.horizontal, 12)
-        .padding(.bottom, 10)
-    }
-
-    private var trayPanel: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(shots) { shot in
-                            thumbButton(shot)
-                        }
-                    }
-                }
-                .frame(height: LivRow.height)
-                .onChange(of: shots.count) { _, _ in
-                    if let last = shots.last {
-                        withAnimation { proxy.scrollTo(last.id) }
-                    }
-                }
-            }
-            TextField("Caption", text: $caption)
-                .font(.system(size: LivType.body))
-                .textFieldStyle(.plain)
-                .submitLabel(.done)
-                .onSubmit { commitCaption() }
-                .padding(.horizontal, 9)
-                .frame(height: 30)
-                .background(
-                    RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                        .fill(LivTheme.surface)
-                )
-            chipRow
-        }
-        .padding(9)
-        .background(
-            RoundedRectangle(cornerRadius: LivTheme.radius)
-                .fill(LivTheme.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: LivTheme.radius)
-                .strokeBorder(LivTheme.border, lineWidth: 0.5)
-        )
-    }
-
-    private func thumbButton(_ shot: CameraShot) -> some View {
-        Button {
-            retarget(shot.id)
-        } label: {
-            Group {
-                if let thumb = shot.thumb {
-                    Image(uiImage: thumb).resizable().scaledToFill()
-                } else {
-                    LivTheme.panel2.overlay(
-                        Image(systemName: "photo")
-                            .font(.system(size: LivType.body))
-                            .foregroundStyle(LivTheme.text2)
-                    )
-                }
-            }
-            .frame(width: 44, height: 44)
-            .clipShape(RoundedRectangle(cornerRadius: LivTheme.radiusSm))
-            .overlay(
-                RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                    .strokeBorder(
-                        shot.id == target ? LivTheme.accent : LivTheme.border,
-                        lineWidth: shot.id == target ? 2 : 0.5)
-            )
-        }
-        .buttonStyle(.plain)
-        .id(shot.id)
-    }
-
-    private var chipRow: some View {
-        HStack(spacing: 6) {
-            // What the active workspace already put on this shot (M4).
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
-                    ForEach(applied[target] ?? []) { chip in
-                        ValueChip(chip.value)
-                    }
-                    // Fixed furniture leads: Area is the one filing question.
-                    AddChip("Area") { openChip(.area) }
-                    AddChip("Tag") { openChip(.tag) }
-                    AddChip("Project") { openChip(.project) }
-                    AddChip("Person") { openChip(.person) }
-                }
-            }
-            if shots.count > 1 {
-                Button {
-                    applyAll.toggle()
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(
-                            systemName: applyAll
-                                ? "checkmark.square.fill" : "square"
-                        )
-                        .font(.system(size: LivType.label))
-                        Text("Apply to all (\(shots.count))")
-                            .font(.system(size: LivType.label).monospacedDigit())
-                            .lineLimit(1)
-                    }
-                    .foregroundStyle(
-                        applyAll ? LivTheme.accent : LivTheme.text3
-                    )
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
-    /// Three-layer lite: used values (count-desc, fetched once on open) →
-    /// type-to-create. Commit fires the verb(s) and closes. Area is the
-    /// exception (§10): a pick-only row of the six areas — no text field,
-    /// no create.
-    private var chipEditor: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if adding == .area {
-                HStack(spacing: 6) {
-                    Text("Area")
-                        .font(.system(size: LivType.body, weight: .semibold))
-                        .foregroundStyle(LivTheme.text2)
-                    Spacer()
-                    Button {
-                        adding = nil
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: LivType.label, weight: .semibold))
-                            .foregroundStyle(LivTheme.text3)
-                    }
-                    .buttonStyle(.plain)
-                }
-            } else {
-                HStack(spacing: 6) {
-                    TextField(
-                        "New \(adding?.label.lowercased() ?? "value")",
-                        text: $chipText
-                    )
-                    .font(.system(size: LivType.body))
-                    .textFieldStyle(.plain)
-                    .submitLabel(.done)
-                    .onSubmit { applyChip(chipText) }
-                    .padding(.horizontal, 9)
-                    .frame(height: 30)
-                    .background(
-                        RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                            .fill(LivTheme.surface)
-                    )
-                    // A PILL, not a blue word — see ConfirmPill.compact.
-                    ConfirmPill("Add", compact: true) { applyChip(chipText) }
-                    Button {
-                        adding = nil
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: LivType.label, weight: .semibold))
-                            .foregroundStyle(LivTheme.text3)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            if !filteredSuggestions.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 5) {
-                        ForEach(filteredSuggestions, id: \.self) { value in
-                            Button { applyChip(value) } label: {
-                                ValueChip(value)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-            }
-        }
-        .padding(9)
-        .background(
-            RoundedRectangle(cornerRadius: LivTheme.radius)
-                .fill(LivTheme.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: LivTheme.radius)
-                .strokeBorder(LivTheme.border, lineWidth: 0.5)
-        )
-    }
-
-    private var filteredSuggestions: [String] {
-        // Area is pick-only: every option stays visible, nothing filters.
-        if adding == .area { return suggestions }
-        let typed = chipText.trimmingCharacters(in: .whitespaces)
-        let pool =
-            typed.isEmpty
-            ? suggestions
-            : suggestions.filter {
-                $0.localizedCaseInsensitiveContains(typed)
-            }
-        return Array(pool.prefix(8))
-    }
-
-    // MARK: shutter row — real shutter, or the simulator's stand-in
-
-    /// Two intents, one row. The shutter KEEPS a photo; Scan text keeps
-    /// the WORDS and throws the picture away. They sit side by side
-    /// because they are the same gesture pointed at the same thing, and
-    /// the difference is only what you wanted out of it.
     @ViewBuilder private var shutterRow: some View {
         VStack(spacing: 6) {
-            if !scanSaid.isEmpty { EmptyHint(scanSaid) }
+            // The screen says what it does: a bare shutter reads as "take a
+            // photo", and this one only reads.
+            EmptyHint(scanning ? "Reading…" : said.isEmpty ? "Scan text" : said)
             if hasCamera {
                 if permission == .granted {
-                    ZStack {
-                        Button {
-                            engine.shoot()
-                        } label: {
-                            ZStack {
-                                Circle().strokeBorder(LivTheme.cameraInk, lineWidth: 3)
-                                    .frame(width: 62, height: 62)
-                                Circle().fill(LivTheme.cameraInk).frame(width: 50, height: 50)
-                            }
-                            .contentShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Shutter")
-
-                        HStack {
-                            Spacer()
-                            Button { scanShot() } label: { scanLabel }
-                                .buttonStyle(.plain)
-                                .disabled(scanning)
-                        }
+                    Button {
+                        shoot()
+                    } label: {
+                        shutterFace
                     }
-                    .frame(maxWidth: .infinity)
+                    .buttonStyle(.plain)
+                    .disabled(scanning)
+                    .accessibilityLabel("Scan text")
                 }
             } else {
-                EmptyHint("Simulator")
-                ZStack {
-                    PhotosPicker(selection: $pickerItem, matching: .images) {
-                        ZStack {
-                            Circle().strokeBorder(LivTheme.cameraInk, lineWidth: 3)
-                                .frame(width: 62, height: 62)
-                            Image(systemName: "photo.on.rectangle")
-                                .font(.system(size: LivType.display))
-                                .foregroundStyle(LivTheme.cameraInk)
-                        }
-                        .contentShape(Circle())
-                    }
-                    .accessibilityLabel("Pick a photo")
-
-                    HStack {
-                        Spacer()
-                        PhotosPicker(selection: $scanPickerItem, matching: .images) {
-                            scanLabel
-                        }
-                        .disabled(scanning)
-                    }
-                }
-                .frame(maxWidth: .infinity)
+                PhotosPicker(selection: $pickerItem, matching: .images) { shutterFace }
+                    .disabled(scanning)
+                    .accessibilityLabel("Scan text")
             }
         }
+        .frame(maxWidth: .infinity)
     }
 
-    /// It says what it does and what it is doing (literal naming). The
-    /// same label carries both states so the control never changes size
-    /// mid-press.
-    private var scanLabel: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "text.viewfinder")
-                .font(.system(size: LivType.strong, weight: .medium))
-            Text(scanning ? "Reading…" : "Scan text")
-                .font(.system(size: LivType.label, weight: .medium))
+    private var shutterFace: some View {
+        ZStack {
+            Circle().strokeBorder(LivTheme.cameraInk, lineWidth: LivCamera.shutterRing)
+                .frame(width: LivCamera.shutter, height: LivCamera.shutter)
+            Circle().fill(LivTheme.cameraInk)
+                .frame(width: LivCamera.shutterCore, height: LivCamera.shutterCore)
         }
-        .foregroundStyle(LivTheme.cameraInk)
-        .padding(.horizontal, 11)
-        .frame(height: 36)
-        .background(LivTheme.cameraChrome, in: Capsule())
-        .contentShape(Capsule())
         .opacity(scanning ? 0.6 : 1)
+        .contentShape(Circle())
     }
 
     // MARK: acts
 
     private func begin() {
-        // ONE shutter, two intents. The engine stays ignorant of which:
-        // whoever pressed sets the flag, and the frame goes where it was
-        // asked for. A second capture path would be a second thing to
-        // keep true (standing rule 4).
-        engine.onPhoto = { data in
-            if wantsScan {
-                wantsScan = false
-                scan(data)
-            } else {
-                ingest(data)
-            }
-        }
+        engine.onPhoto = { scan($0) }
         engine.onShotFailed = {
-            wantsScan = false
             scanning = false
             CameraFlow.buzz()
         }
@@ -730,160 +305,54 @@ struct CameraFlow: View {
         }
     }
 
-    // MARK: scanning — the words, not the picture
-
-    /// Ask the next frame for its words.
-    private func scanShot() {
+    private func shoot() {
         guard !scanning else { return }
-        scanSaid = ""
+        said = ""
         scanning = true
-        wantsScan = true
         engine.shoot()
     }
 
     /// A frame taken to be READ. The bytes are recognised and dropped —
-    /// no file is written, no photo entity is born (owner, 2026-08-19:
-    /// *"scan into a note, drop the photo"*). This is Apple Notes' Scan
-    /// Text: only the characters cross over.
-    ///
-    /// What comes back is a note, and you land in it. Apple reviews
-    /// before committing, by making you drag grab points over the words;
-    /// Todoist reviews on a draft screen. Liv reviews AFTER, in the
-    /// editor you land in — the same words, fully editable, and a note
-    /// you did not want is one swipe from the trash. The trade is
-    /// deliberate: an in-viewfinder selection step is a second surface,
-    /// and this app is meant to stay small.
+    /// only the characters cross over, into a note you land in (owner,
+    /// 2026-08-19: "scan into a note, drop the photo"). Liv reviews AFTER,
+    /// in the editor: the same words, fully editable, and a note you did
+    /// not want is one swipe from the trash.
     private func scan(_ data: Data) {
         scanning = true
         LivScan.read(data) { found in
+            // Closed while it read: the page was put away, and no note
+            // turns up later that nobody asked to keep (review, 2026-10-02).
+            guard !closed else { return }
             let text = found.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else {
-                // NO empty note. A photograph with no words in it is not
-                // a document you meant to make.
+                // NO empty note. A page with no words on it is not a
+                // document you meant to make.
                 scanning = false
-                scanSaid = "No text found"
+                said = "No text found"
                 CameraFlow.buzz()
                 return
             }
-            model.createNote { id in
+            // ONE action, words and all, so one undo takes it back. NO name:
+            // the first line names it, the core's rule for anything unnamed.
+            //
+            // plainSpans, NOT textToSpans: what the camera read is not
+            // markdown someone typed. The editor's parser deletes a line of
+            // three or more dashes — the separator on every receipt — and
+            // turns a printed "- [ ]" into a real task.
+            let spans = SpanText.json(SpanText.plainSpans(text))
+            model.makeNote(name: nil, spansJson: spans) { id in
+                scanning = false
                 guard !id.isAbsent else {
-                    scanning = false
                     CameraFlow.buzz()
                     return
                 }
-                // A fresh note holds no content, so its fingerprint is 0
-                // — the compare-and-swap has nothing to lose a race with.
-                //
-                // plainSpans, NOT textToSpans: what the camera read is
-                // not markdown someone typed. The editor's parser deletes
-                // a line of three or more dashes outright — the separator
-                // on every receipt and letterhead — and turns a printed
-                // "- [ ]" into a real task in your Tasks list.
-                let spans = SpanText.plainSpans(text)
-                model.setContent(id, spansJson: SpanText.json(spans), base: 0) { status, _ in
-                    scanning = false
-                    guard status == 1 else {
-                        // Take the empty note back out. A refused write
-                        // used to leave a blank note behind, which is a
-                        // worse outcome than the failure itself.
-                        model.trash(id)
-                        CameraFlow.buzz()
-                        return
-                    }
-                    // Stamped like every other creation door, then out.
-                    // NO name is set: the first line names it, which is
-                    // the core's own rule for anything unnamed — and it
-                    // is the one precedent for content-derived naming
-                    // anywhere (Apple Notes titles a note by its first
-                    // line; nothing renames an image from what it read).
-                    workspaces.stamp(id, in: model)
-                    onDone?([id])
-                    dismiss()
-                }
+                // Stamped like every other creation door.
+                workspaces.stamp(id, in: model)
+                guard !closed else { return }
+                onDone?(id)
+                dismiss()
             }
         }
-    }
-
-    /// Shutter and picker converge here: bytes to disk off-main, then
-    /// liv_add_file — the entity exists before any tagging happens.
-    private func ingest(_ data: Data) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            guard let path = CameraStore.write(data) else {
-                DispatchQueue.main.async { CameraFlow.buzz() }
-                return
-            }
-            let thumb = UIImage(data: data)?.preparingThumbnail(
-                of: CGSize(width: 160, height: 160))
-            DispatchQueue.main.async {
-                model.addFile(path) { id in
-                    guard !id.isAbsent else {
-                        CameraFlow.buzz()
-                        return
-                    }
-                    commitCaption()  // the shot the user was captioning
-                    // Photos inherit the active workspace like every other
-                    // capture door (M4); the tray's stamp line says so.
-                    workspaces.stamp(id, in: model)
-                    shots.append(CameraShot(id: id, thumb: thumb))
-                    target = id
-                    caption = captions[id] ?? ""
-                }
-            }
-        }
-    }
-
-    private func retarget(_ id: LivEntityID) {
-        commitCaption()
-        target = id
-        caption = captions[id] ?? ""
-    }
-
-    /// Caption is per-shot (the apply-all toggle governs chips only).
-    private func commitCaption() {
-        guard !target.isAbsent else { return }
-        let text = caption.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard text != (captions[target] ?? ""), !text.isEmpty else { return }
-        captions[target] = text
-        model.set(target, "name", text)
-    }
-
-    private func openChip(_ kind: CameraChipKind) {
-        adding = kind
-        chipText = ""
-        // AREA IS NO LONGER A SPECIAL CASE (2026-09-21). It led with the
-        // six the app shipped and unioned the box's own in after them;
-        // the app ships none, so there is nothing to lead with and the
-        // union had one side. Every chip asks the box the same way now,
-        // which is the rule the other three already followed.
-        suggestions = []
-        model.distinctValues(property: kind.property) { suggestions = $0 }
-    }
-
-    /// One verb per entity: membership properties addCell, project/area
-    /// set. Chip honesty: the chip is recorded ONLY in the verb's success
-    /// callback — a refused write buzzes and leaves no chip.
-    private func applyChip(_ raw: String) {
-        guard let kind = adding else { return }
-        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return }
-        let ids = applyAll ? shots.map(\.id) : [target]
-        for id in ids where !id.isAbsent {
-            let done: (Bool) -> Void = { ok in
-                guard ok else { return CameraFlow.buzz() }
-                var list = applied[id, default: []]
-                let chip = CameraApplied(property: kind.property, value: value)
-                if !list.contains(where: { $0.id == chip.id }) {
-                    list.append(chip)
-                    applied[id] = list
-                }
-            }
-            if kind.multi {
-                model.addCell(id, kind.property, value, done: done)
-            } else {
-                model.set(id, kind.property, value, done: done)
-            }
-        }
-        adding = nil
     }
 
     /// The macOS shell beeps on failure; the phone buzzes.

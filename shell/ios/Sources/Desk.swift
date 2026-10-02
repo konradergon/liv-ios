@@ -30,8 +30,6 @@ struct DeskHost: View {
     @State private var chipUndo: (() -> Void)?
     /// Closes the double-tap window while a copy is in flight.
     @State private var copying = false
-    /// What the ••• is handing to the rest of the phone (phase 7).
-    @State private var share: SharePayload?
     /// The file picker, opened by the `+` menu's file row.
     @State private var picking = false
     /// Guards the create doors against a double tap while a write is in
@@ -507,7 +505,7 @@ struct DeskHost: View {
         // mid-use; MODEL state so a notification tap can dismiss them
         // (audits 2026-08-04).
         .sheet(isPresented: $desk.settingsShown) { SettingsSheet() }
-        .sheet(item: $share) { payload in
+        .sheet(item: $desk.share) { payload in
             ShareSheet(items: payload.items)
         }
         // WHAT IS ON SCREEN, told to the box once, here: a screen's answer
@@ -681,6 +679,11 @@ struct DeskHost: View {
     /// is where Anytype puts them and where this app's other card verbs
     /// already live.
     private func claimPanel(_ dx: CGFloat) -> Bool? {
+        // NOT WHILE WRITING (owner, 2026-10-01: "when keyboard is up panel
+        // shouldn't be swiped in"). Dragging to select text slid the panel
+        // in — and dropped the selection. Asked at the latch, so a long
+        // press that raised the keyboard on its way counts too.
+        if keyboard.up || keyboard.editing { return nil }
         if dx > 0 { return desk.libraryShown ? nil : true }
         return desk.libraryShown ? false : nil
     }
@@ -778,14 +781,8 @@ struct DeskHost: View {
                 duplicate(id)
             },
         ]
-        // A file hands its BYTES to whatever owns the format. Share and
-        // Export are about MARKDOWN, so a file has none.
-        if isFile, let facts = FileFacts.of(row), facts.exists {
-            items.append(
-                LivMenuItem(label: "Open in…", symbol: "square.and.arrow.up") {
-                    share = SharePayload(items: [facts.url])
-                })
-        }
+        // A file opens from its own card (Files.swift): one way, on the
+        // screen, not a second one in here.
         if !isFile {
             // EVERY VERSION IS STILL THERE — the thesis's promise, and
             // until 2026-09-09 a promise the core kept and the shell
@@ -954,13 +951,8 @@ struct DeskHost: View {
                 LivMenuItem(label: "Task", glyph: .tasks) { createRecord(event: false) },
                 LivMenuItem(label: "Event", glyph: .event) { createRecord(event: true) },
                 LivMenuItem(label: "File", glyph: .file(.other)) { picking = true },
-                // The camera's way in. It had none: nothing has set
-                // `cameraShown` since the tab plane that used to hold the
-                // button was deleted, so the whole flow was unreachable
-                // (found 2026-08-19). Named for what the owner uses it
-                // for — "i don't see usage for camera except ocr
-                // scanning" — and the shutter still takes plain photos
-                // once you are in there.
+                // The camera's way in, named for the one thing it does
+                // (owner, 2026-10-01: "camera: scanning only").
                 LivMenuItem(label: "Scan text", glyph: .scan) {
                     desk.cameraShown = true
                 },
@@ -1047,9 +1039,9 @@ struct DeskHost: View {
                     UINotificationFeedbackGenerator().notificationOccurred(.error)
                     return
                 }
-                share = payload
+                desk.share = payload
             } else {
-                share = SharePayload.text(markdown)
+                desk.share = SharePayload.text(markdown)
             }
         }
     }

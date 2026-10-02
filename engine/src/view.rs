@@ -138,6 +138,10 @@ CREATE INDEX IF NOT EXISTS edits_by_time ON edits(entity, at_ms);
 --
 -- Keyed by the HASH, not the entity: two entities holding the same bytes
 -- are the same file, and this answers WHAT, not WHICH.
+--
+-- `path` is RELATIVE to the box's folder when the file is inside it — the
+-- phone's app folder moves on every reinstall — and whole otherwise.
+-- `Engine::path_of` (files.rs) is the one reader that resolves it.
 CREATE TABLE IF NOT EXISTS places (
     hash BLOB NOT NULL PRIMARY KEY,
     path TEXT NOT NULL
@@ -524,7 +528,8 @@ pub fn exists(conn: &Connection, id: EntityId) -> Result<bool, rusqlite::Error> 
     Ok(n > 0)
 }
 
-/// Where this device keeps the file with those bytes.
+/// Where this device keeps the file with those bytes, AS STORED —
+/// possibly relative to the box's folder. `Engine::path_of` resolves it.
 pub fn path_of(conn: &Connection, hash: &[u8; 32]) -> Result<Option<String>, rusqlite::Error> {
     Ok(conn
         .query_row(

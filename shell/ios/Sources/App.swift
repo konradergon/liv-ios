@@ -287,11 +287,7 @@ struct RootView: View {
                 .environmentObject(workspaces)
                 // Search can open a task too, and it is a cover.
                 .recordCardHost(active: true)
-                .overlay(alignment: .bottom) {
-                    if let id = desk.minimisedRecord {
-                        MinimisedRecordPill(id: id).padding(.bottom, 10)
-                    }
-                }
+                .overlay(alignment: .bottom) { SearchPill() }
         }
         .sheet(isPresented: $desk.trashShown) {
             TrashView()
@@ -305,9 +301,7 @@ struct RootView: View {
                 .presentationDragIndicator(.visible)
         }
         .fullScreenCover(isPresented: $desk.cameraShown) {
-            CameraFlow(onDone: { ids in
-                if let last = ids.last { desk.open(last) }
-            })
+            CameraFlow(onDone: { desk.open($0) })
             .environmentObject(box)
             .environmentObject(desk)
             .environmentObject(workspaces)
@@ -344,7 +338,7 @@ struct RootView: View {
                     } else {
                         desk.newNote?()
                     }
-                case .capturePhoto: desk.cameraShown = true
+                case .scan: desk.cameraShown = true
                 // A link that NAMES a view lands on that view, by the
                 // same rule the panel's rows follow (2026-09-09):
                 // `liv://notes` means the list, not whatever note the

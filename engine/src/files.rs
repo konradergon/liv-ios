@@ -13,12 +13,20 @@
 //! arrived by sync has a hash and no path on this device, and `path_of`
 //! saying `None` is the honest answer to "where is it".
 //!
-//! **Nothing is copied or moved, ever.** The file is read to hash it and
-//! otherwise left exactly where the user put it (`feature-map`: the
-//! librarian, not the warehouse).
+//! **Nothing here copies or moves a file.** It is read to hash it and
+//! otherwise left where it was put (`feature-map`: the librarian, not the
+//! warehouse). The phone puts what it is handed in the box's own folder,
+//! `files/<uuid>/<name>`, because iOS hands an app a copy, not a place —
+//! and a path inside that folder is remembered RELATIVE to it, because
+//! reinstalling the app moves the folder and every whole path with it.
+//!
+//! **A file that holds text is opened as a note** (owner, 2026-10-01).
+//! `text_of` decides what holds text; `file_into_note` (`content.rs`)
+//! makes the change, and the file itself is never written.
 
 use sha2::{Digest, Sha256};
 use std::io::Read;
+use std::path::{Component, Path};
 
 use crate::engine::Engine;
 use crate::id::EntityId;
@@ -98,12 +106,93 @@ pub fn hash_file(path: &str) -> std::io::Result<[u8; 32]> {
     Ok(hasher.finalize().into())
 }
 
+/// The most a file may hold and still be opened as a note: half a
+/// megabyte, a long book's worth of words. Anything larger is not
+/// something a person edits on a phone.
+pub const TEXT_CAP: u64 = 512 * 1024;
+
+/// The words in a file, if it holds words — `None` when it does not.
+///
+/// **The one judge of "this file is text"** (owner, 2026-10-01: a file is
+/// opened if it contains text, which is edited as a note). Text is UTF-8
+/// with no NUL in it, at most `TEXT_CAP` bytes. No encoding is guessed:
+/// a guess would put mangled words in someone's note, and refusing leaves
+/// the file to the app that made it.
+///
+/// Read at most one byte past the cap, so a file that grows while it is
+/// read is still turned down rather than read whole. A leading byte
+/// order mark is dropped and every line ending becomes `\n` — those are
+/// how the bytes were saved, not words.
+pub fn text_of(path: &str) -> std::io::Result<Option<String>> {
+    let file = std::fs::File::open(path)?;
+    let ext = extension(path);
+    if NOT_NOTES.contains(&ext.as_str()) || file.metadata()?.len() > TEXT_CAP {
+        return Ok(None);
+    }
+    let mut bytes = Vec::new();
+    file.take(TEXT_CAP + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > TEXT_CAP {
+        return Ok(None);
+    }
+    let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
+    if bytes.contains(&0) {
+        return Ok(None);
+    }
+    // An empty file is a note only when its name says plain words: an
+    // empty .docx is a document nobody has written yet.
+    if bytes.is_empty() && !PLAIN.contains(&ext.as_str()) {
+        return Ok(None);
+    }
+    let Ok(text) = std::str::from_utf8(bytes) else { return Ok(None) };
+    Ok(Some(text.replace("\r\n", "\n").replace('\r', "\n")))
+}
+
+/// WORDS IN ANOTHER APP'S MARKUP are not a note, though they are UTF-8: an
+/// RTF letter, a spreadsheet's CSV, a drawing's SVG, a web page. As notes
+/// they arrived as raw markup, and the file itself was gone (review,
+/// 2026-10-02). They stay files, and open in the app they belong to.
+const NOT_NOTES: &[&str] = &[
+    "rtf", "csv", "tsv", "svg", "html", "htm", "xhtml", "xml", "ics", "vcf", "eml", "pdf",
+    "ps", "eps",
+];
+
+/// The names that say a file holds plain words.
+const PLAIN: &[&str] = &["", "txt", "text", "md", "markdown"];
+
+/// A file's extension, lowercased; "" when it has none.
+fn extension(path: &str) -> String {
+    Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase()
+}
+
+/// What a note made from a file is called: its name without the last
+/// extension. `.bashrc` is all name; a name with nothing else is kept.
+/// A whole path works too — only its last part counts.
+///
+/// An extension is short, has no spaces and has a letter in it: "Version
+/// 2.0 notes", "Dr. Who quotes" and "Release 2.0" are names with a dot in
+/// them, not names with an extension (review, 2026-10-02).
+pub fn note_name(file_name: &str) -> String {
+    let last = Path::new(file_name).file_name().and_then(|s| s.to_str()).unwrap_or(file_name);
+    match last.rsplit_once('.') {
+        Some((stem, ext))
+            if !stem.is_empty()
+                && !ext.is_empty()
+                && ext.len() <= 8
+                && ext.chars().all(|c| c.is_ascii_alphanumeric())
+                && ext.chars().any(|c| c.is_ascii_alphabetic()) =>
+        {
+            stem.to_owned()
+        }
+        _ => last.to_owned(),
+    }
+}
+
 impl Engine {
     /// Take a file into the box, by reference.
     ///
     /// One action: the entity, its kind, the filename as its name, the
     /// hash, and the format. The path is remembered separately, on this
-    /// device only.
+    /// device only — relative to the box's folder when the file is in it.
     pub fn add_file(&mut self, path: &str, now_ms: u64) -> Result<EntityId, FileError> {
         let hash = hash_file(path).map_err(FileError::Unreadable)?;
         let p = std::path::Path::new(path);
@@ -176,12 +265,27 @@ impl Engine {
         Ok(Resync::Changed(fresh))
     }
 
-    /// Where this device keeps that file, if it keeps it at all.
+    /// Where this device keeps that file, if it keeps it at all — always
+    /// a whole path when the box is on disk.
+    ///
+    /// **The one reader of `places`.** A relative row is joined to the
+    /// box's folder as it is NOW, which is how a moved box or a
+    /// reinstalled app still finds its files. A whole row — anything
+    /// outside the box's folder, and every row written before places went
+    /// relative — is handed back as written.
     pub fn path_of(&self, id: EntityId) -> Result<Option<String>, LogError> {
         let Some(Value::Blob(hash)) = self.one(id, prop::FILE)? else {
             return Ok(None);
         };
-        Ok(crate::view::path_of(self.conn(), &hash)?)
+        let Some(stored) = crate::view::path_of(self.conn(), &hash)? else {
+            return Ok(None);
+        };
+        Ok(Some(match self.home() {
+            Some(home) if Path::new(&stored).is_relative() => {
+                home.join(&stored).to_string_lossy().into_owned()
+            }
+            _ => stored,
+        }))
     }
 
     /// Say where a file is on this device — what `add_file` does, and what
@@ -193,7 +297,31 @@ impl Engine {
         let Some(Value::Blob(hash)) = self.one(id, prop::FILE)? else {
             return Ok(());
         };
-        crate::view::remember_path(self.conn(), &hash, path)?;
+        crate::view::remember_path(self.conn(), &hash, &self.place(path))?;
         Ok(())
+    }
+
+    /// How a path is written into `places`: relative to the box's folder
+    /// when the file is inside it, whole otherwise.
+    ///
+    /// Made whole first, against the current directory — where `hash_file`
+    /// just read it from — so the CLI's `liv file ./x.pdf` means the file
+    /// it hashed. A remainder that climbs out with `..` is not inside,
+    /// whatever its spelling starts with.
+    fn place(&self, path: &str) -> String {
+        let Ok(whole) = std::path::absolute(path) else { return path.to_owned() };
+        if let Some(rest) = self.home().and_then(|home| whole.strip_prefix(home).ok()) {
+            let parts: Vec<_> = rest.components().collect();
+            if !parts.is_empty() && !parts.contains(&Component::ParentDir) {
+                // `/` on every platform, so the row reads the same
+                // wherever the box is opened.
+                return parts
+                    .iter()
+                    .map(|c| c.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
+            }
+        }
+        whole.to_string_lossy().into_owned()
     }
 }
